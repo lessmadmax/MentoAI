@@ -1,0 +1,97 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>MentoAI API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .card { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .type { background: #007bff; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px; }
+        button { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #218838; }
+    </style>
+</head>
+<body>
+    <h1> MentoAI API 테스트</h1>
+    
+    <div>
+        <button onclick="testUsers()">사용자 목록 조회</button>
+        <button onclick="testActivities()">활동 목록 조회</button>
+        <button onclick="testRecommendations()">추천 활동 조회</button>
+        <button onclick="testSearch()">의미 기반 검색</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        const API_BASE = 'http://192.168.37.1:8080';
+        
+        async function testUsers() {
+            try {
+                const response = await fetch(API_BASE + '/users');
+                const data = await response.json();
+                displayResults('사용자 목록', data.content);
+            } catch (error) {
+                displayError('사용자 조회 실패: ' + error.message);
+            }
+        }
+        
+        async function testActivities() {
+            try {
+                const response = await fetch(API_BASE + '/activities?limit=3');
+                const data = await response.json();
+                displayResults('활동 목록', data.content);
+            } catch (error) {
+                displayError('활동 조회 실패: ' + error.message);
+            }
+        }
+        
+        async function testRecommendations() {
+            try {
+                const response = await fetch(API_BASE + '/recommend/activities/1?limit=3');
+                const data = await response.json();
+                displayResults('추천 활동', data);
+            } catch (error) {
+                displayError('추천 조회 실패: ' + error.message);
+            }
+        }
+        
+        async function testSearch() {
+            try {
+                const response = await fetch(API_BASE + '/recommend/semantic-search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: '개발', limit: 3, userId: '1' })
+                });
+                const data = await response.json();
+                displayResults('검색 결과', data);
+            } catch (error) {
+                displayError('검색 실패: ' + error.message);
+            }
+        }
+        
+        function displayResults(title, data) {
+            const resultsDiv = document.getElementById('results');
+            let html = '<h2>' + title + '</h2>';
+            
+            if (Array.isArray(data)) {
+                data.forEach(item => {
+                    html += '<div class="card">';
+                    html += '<h3>' + (item.title || item.name || 'ID: ' + item.id) + '</h3>';
+                    if (item.content) html += '<p>' + item.content + '</p>';
+                    if (item.type) html += '<span class="type">' + item.type + '</span>';
+                    if (item.organizer) html += '<p><strong>주최:</strong> ' + item.organizer + '</p>';
+                    html += '</div>';
+                });
+            } else {
+                html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            }
+            
+            resultsDiv.innerHTML = html;
+        }
+        
+        function displayError(message) {
+            document.getElementById('results').innerHTML = '<div style="color: red;">' + message + '</div>';
+        }
+    </script>
+</body>
+</html>
