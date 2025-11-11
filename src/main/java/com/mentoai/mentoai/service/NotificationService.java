@@ -1,5 +1,6 @@
 package com.mentoai.mentoai.service;
 
+import com.mentoai.mentoai.entity.ActivityDateEntity;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.NotificationEntity;
 import com.mentoai.mentoai.entity.NotificationEntity.NotificationStatus;
@@ -166,9 +167,11 @@ public class NotificationService {
         
         // 3일 이내 마감되는 활동들 조회
         List<ActivityEntity> upcomingDeadlines = activityRepository.findAll().stream()
-                .filter(activity -> activity.getEndDate() != null)
-                .filter(activity -> activity.getEndDate().isAfter(now))
-                .filter(activity -> activity.getEndDate().isBefore(threeDaysFromNow))
+                .map(activity -> Map.entry(activity, extractApplyEndDate(activity)))
+                .filter(entry -> entry.getValue() != null)
+                .filter(entry -> entry.getValue().isAfter(now))
+                .filter(entry -> entry.getValue().isBefore(threeDaysFromNow))
+                .map(Map.Entry::getKey)
                 .toList();
         
         for (ActivityEntity activity : upcomingDeadlines) {
@@ -198,6 +201,17 @@ public class NotificationService {
         
         log.info("마감 임박 알림 생성 완료: {}개 활동", upcomingDeadlines.size());
         return CompletableFuture.completedFuture(null);
+    }
+
+    private LocalDateTime extractApplyEndDate(ActivityEntity activity) {
+        if (activity.getDates() == null || activity.getDates().isEmpty()) {
+            return null;
+        }
+        return activity.getDates().stream()
+                .filter(date -> date.getDateType() == ActivityDateEntity.DateType.APPLY_END)
+                .map(ActivityDateEntity::getDateValue)
+                .min(LocalDateTime::compareTo)
+                .orElse(null);
     }
     
     // 추천 활동 알림 생성

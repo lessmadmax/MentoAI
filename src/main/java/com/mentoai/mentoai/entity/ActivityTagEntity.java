@@ -1,9 +1,9 @@
 package com.mentoai.mentoai.entity;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
 
 @Entity
 @Table(name = "activity_tags")
@@ -11,18 +11,17 @@ import lombok.AllArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ActivityTagEntity {
-    
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "activity_id", nullable = false)
+
+    @EmbeddedId
+    private ActivityTagId id = new ActivityTagId();
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @MapsId("activityId")
+    @JoinColumn(name = "activity_id")
     private ActivityEntity activity;
-    
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tag_id", nullable = false)
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @MapsId("tagId")
+    @JoinColumn(name = "tag_id")
     private TagEntity tag;
 }
-
-

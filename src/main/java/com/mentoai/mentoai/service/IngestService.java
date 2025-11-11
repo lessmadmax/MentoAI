@@ -169,18 +169,7 @@ public class IngestService {
         }
         
         // 상태 설정
-        activity.setStatus(ActivityEntity.ActivityStatus.ACTIVE);
-        
-        // 날짜 설정
-        String startDateStr = (String) data.get("startDate");
-        String endDateStr = (String) data.get("endDate");
-        
-        if (startDateStr != null) {
-            activity.setStartDate(LocalDateTime.parse(startDateStr));
-        }
-        if (endDateStr != null) {
-            activity.setEndDate(LocalDateTime.parse(endDateStr));
-        }
+        activity.setStatus(ActivityEntity.ActivityStatus.OPEN);
         
         return activity;
     }

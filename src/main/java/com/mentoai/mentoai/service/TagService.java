@@ -4,8 +4,6 @@ import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.entity.TagEntity.TagType;
 import com.mentoai.mentoai.repository.TagRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,16 +18,14 @@ public class TagService {
     
     private final TagRepository tagRepository;
     
-    public Page<TagEntity> getTags(String query, TagType type, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size);
-        return tagRepository.findByFilters(query, type, pageable);
+    public List<TagEntity> getTags(String query, TagType type) {
+        return tagRepository.findByFilters(query, type, Pageable.unpaged()).getContent();
     }
     
     @Transactional
     public TagEntity createTag(TagEntity tag) {
-        // 중복 태그명 체크
-        if (tagRepository.existsByName(tag.getName())) {
-            throw new IllegalArgumentException("이미 존재하는 태그명입니다: " + tag.getName());
+        if (tagRepository.existsByNameAndType(tag.getName(), tag.getType())) {
+            throw new IllegalArgumentException("이미 존재하는 태그입니다: " + tag.getName() + " (" + tag.getType() + ")");
         }
         return tagRepository.save(tag);
     }

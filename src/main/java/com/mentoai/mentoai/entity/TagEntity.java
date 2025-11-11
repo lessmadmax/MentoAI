@@ -1,40 +1,30 @@
 package com.mentoai.mentoai.entity;
 
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-
-import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "tags")
+@Table(name = "tags", uniqueConstraints = @UniqueConstraint(name = "uq_tag", columnNames = {"tag_name", "tag_type"}))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class TagEntity {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "tag_id")
     private Long id;
-    
-    @Column(nullable = false, unique = true, length = 100)
+
+    @Column(name = "tag_name", nullable = false)
     private String name;
-    
+
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(name = "tag_type", nullable = false)
     private TagType type;
-    
-    @Column(columnDefinition = "TEXT")
-    private String description;
-    
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-    
+
     public enum TagType {
-        SKILL, JOB, TOPIC, CATEGORY
+        ROLE, SKILL, TOPIC, CATEGORY
     }
 }
-

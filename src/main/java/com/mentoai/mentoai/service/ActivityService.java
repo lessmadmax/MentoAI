@@ -1,21 +1,26 @@
 package com.mentoai.mentoai.service;
 
-import com.mentoai.mentoai.entity.ActivityEntity;
+import com.mentoai.mentoai.controller.dto.ActivityDateUpsertRequest;
+import com.mentoai.mentoai.controller.dto.ActivityUpsertRequest;
+import com.mentoai.mentoai.controller.dto.AttachmentUpsertRequest;
+import com.mentoai.mentoai.entity.*;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
-import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.TagRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -32,35 +37,41 @@ public class ActivityService {
             List<String> tagNames,
             Boolean isCampus,
             ActivityStatus status,
+            LocalDate deadlineBefore,
             int page,
             int size,
             String sort,
             String direction) {
-        
-        // 정렬 설정
-        Sort.Direction sortDirection = "desc".equalsIgnoreCase(direction) ? 
-            Sort.Direction.DESC : Sort.Direction.ASC;
-        Sort sortObj = Sort.by(sortDirection, sort);
-        
-        Pageable pageable = PageRequest.of(page, size, sortObj);
-        
-        // 태그가 있는 경우 복합 검색, 없는 경우 기본 검색
-        if (tagNames != null && !tagNames.isEmpty()) {
-            return activityRepository.findByComplexFilters(
-                query, type, isCampus, status, tagNames, pageable);
-        } else {
-            return activityRepository.findByFilters(
-                query, type, isCampus, status, pageable);
+
+        Sort.Order sortOrder = new Sort.Order(
+                Sort.Direction.fromOptionalString(direction).orElse(Sort.Direction.DESC),
+                sort);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortOrder));
+
+        LocalDateTime deadlineDateTime = null;
+        if (deadlineBefore != null) {
+            deadlineDateTime = deadlineBefore.atTime(LocalTime.MAX);
         }
+
+        return activityRepository.search(
+                query,
+                type,
+                (tagNames == null || tagNames.isEmpty()) ? null : tagNames,
+                isCampus,
+                status,
+                deadlineDateTime,
+                ActivityDateEntity.DateType.APPLY_END,
+                pageable
+        );
     }
     
     @Transactional
-    public ActivityEntity createActivity(ActivityEntity activity) {
+    public ActivityEntity createActivity(ActivityUpsertRequest request) {
+        ActivityEntity activity = new ActivityEntity();
+        applyUpsert(activity, request);
+
         ActivityEntity savedActivity = activityRepository.save(activity);
-        
-        // 새로운 활동 알림 생성 (비동기)
         notificationService.createNewActivityNotification(savedActivity);
-        
         return savedActivity;
     }
     
@@ -69,18 +80,10 @@ public class ActivityService {
     }
     
     @Transactional
-    public Optional<ActivityEntity> updateActivity(Long id, ActivityEntity updatedActivity) {
+    public Optional<ActivityEntity> updateActivity(Long id, ActivityUpsertRequest request) {
         return activityRepository.findById(id)
             .map(existingActivity -> {
-                existingActivity.setTitle(updatedActivity.getTitle());
-                existingActivity.setContent(updatedActivity.getContent());
-                existingActivity.setType(updatedActivity.getType());
-                existingActivity.setOrganizer(updatedActivity.getOrganizer());
-                existingActivity.setUrl(updatedActivity.getUrl());
-                existingActivity.setIsCampus(updatedActivity.getIsCampus());
-                existingActivity.setStatus(updatedActivity.getStatus());
-                existingActivity.setStartDate(updatedActivity.getStartDate());
-                existingActivity.setEndDate(updatedActivity.getEndDate());
+                applyUpsert(existingActivity, request);
                 return activityRepository.save(existingActivity);
             });
     }
@@ -95,10 +98,143 @@ public class ActivityService {
     }
     
     public List<ActivityEntity> getActiveActivities() {
-        return activityRepository.findByStatus(ActivityStatus.ACTIVE);
+        return activityRepository.findByStatus(ActivityStatus.OPEN);
     }
     
     public List<ActivityEntity> getCampusActivities(Boolean isCampus) {
         return activityRepository.findByIsCampus(isCampus);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AttachmentEntity> getAttachments(Long activityId) {
+        return activityRepository.findById(activityId)
+                .map(activity -> {
+                    List<AttachmentEntity> attachments = activity.getAttachments();
+                    return attachments == null ? List.of() : List.copyOf(attachments);
+                })
+                .orElseThrow(() -> new IllegalArgumentException("활동을 찾을 수 없습니다: " + activityId));
+    }
+
+    @Transactional
+    public AttachmentEntity addAttachment(Long activityId, AttachmentUpsertRequest request) {
+        ActivityEntity activity = activityRepository.findById(activityId)
+                .orElseThrow(() -> new IllegalArgumentException("활동을 찾을 수 없습니다: " + activityId));
+
+        if (activity.getAttachments() == null) {
+            activity.setAttachments(new ArrayList<>());
+        }
+
+        AttachmentEntity attachment = new AttachmentEntity();
+        attachment.setActivity(activity);
+        attachment.setFileType(parseEnum(
+                request.fileType(),
+                AttachmentEntity.FileType::valueOf,
+                AttachmentEntity.FileType.class));
+        attachment.setFileUrl(request.fileUrl());
+        attachment.setOcrText(request.ocrText());
+
+        activity.getAttachments().add(attachment);
+        activityRepository.saveAndFlush(activity);
+        return attachment;
+    }
+
+    private void applyUpsert(ActivityEntity activity, ActivityUpsertRequest request) {
+        activity.setTitle(request.title());
+        activity.setSummary(request.summary());
+        activity.setContent(request.content());
+        activity.setType(parseEnum(request.type(), ActivityType::valueOf, ActivityType.class));
+        activity.setOrganizer(request.organizer());
+        activity.setLocation(request.location());
+        activity.setUrl(request.url());
+        activity.setIsCampus(request.isCampus() != null ? request.isCampus() : Boolean.FALSE);
+        activity.setStatus(parseEnumOrDefault(request.status(), ActivityStatus::valueOf, ActivityStatus.OPEN));
+        activity.setPublishedAt(request.publishedAt());
+
+        syncActivityDates(activity, request.dates());
+        syncActivityTags(activity, request.tags());
+    }
+
+    private void syncActivityDates(ActivityEntity activity, List<ActivityDateUpsertRequest> dateRequests) {
+        if (activity.getDates() == null) {
+            activity.setDates(new ArrayList<>());
+        } else {
+            activity.getDates().clear();
+        }
+        if (dateRequests == null) {
+            return;
+        }
+        for (ActivityDateUpsertRequest dateRequest : dateRequests) {
+            ActivityDateEntity dateEntity = new ActivityDateEntity();
+            dateEntity.setActivity(activity);
+            dateEntity.setDateType(parseEnum(
+                    dateRequest.dateType(),
+                    ActivityDateEntity.DateType::valueOf,
+                    ActivityDateEntity.DateType.class));
+            dateEntity.setDateValue(dateRequest.dateValue());
+            activity.getDates().add(dateEntity);
+        }
+    }
+
+    private void syncActivityTags(ActivityEntity activity, List<String> tagNames) {
+        if (activity.getActivityTags() == null) {
+            activity.setActivityTags(new ArrayList<>());
+        } else {
+            activity.getActivityTags().clear();
+        }
+        if (tagNames == null || tagNames.isEmpty()) {
+            return;
+        }
+
+        List<String> distinctNames = tagNames.stream()
+                .filter(name -> name != null && !name.isBlank())
+                .map(String::trim)
+                .distinct()
+                .collect(Collectors.toList());
+
+        if (distinctNames.isEmpty()) {
+            return;
+        }
+
+        List<TagEntity> tags = tagRepository.findByNameIn(distinctNames);
+        Set<String> foundNames = tags.stream().map(TagEntity::getName).collect(Collectors.toSet());
+        List<String> missing = distinctNames.stream()
+                .filter(name -> !foundNames.contains(name))
+                .toList();
+
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("존재하지 않는 태그입니다: " + String.join(", ", missing));
+        }
+
+        for (TagEntity tag : tags) {
+            ActivityTagEntity activityTag = new ActivityTagEntity();
+            activityTag.setActivity(activity);
+            activityTag.setTag(tag);
+            activity.getActivityTags().add(activityTag);
+        }
+    }
+
+    private <E extends Enum<E>> E parseEnum(String value, java.util.function.Function<String, E> parser, Class<E> enumClass) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return parser.apply(value.toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            String allowed = String.join(", ", enumNames(enumClass));
+            throw new IllegalArgumentException("허용되지 않는 값입니다. value=" + value + ", allowed=" + allowed);
+        }
+    }
+
+    private <E extends Enum<E>> E parseEnumOrDefault(String value, java.util.function.Function<String, E> parser, E defaultValue) {
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        return parseEnum(value, parser, defaultValue.getDeclaringClass());
+    }
+
+    private <E extends Enum<E>> List<String> enumNames(Class<E> enumClass) {
+        return java.util.Arrays.stream(enumClass.getEnumConstants())
+                .map(Enum::name)
+                .toList();
     }
 }

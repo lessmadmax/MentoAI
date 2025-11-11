@@ -21,8 +21,7 @@ public interface TagRepository extends JpaRepository<TagEntity, Long> {
     
     @Query("SELECT t FROM TagEntity t WHERE " +
            "(:q IS NULL OR :q = '' OR " +
-           "LOWER(t.name) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
-           "LOWER(t.description) LIKE LOWER(CONCAT('%', :q, '%'))) AND " +
+           "LOWER(t.name) LIKE LOWER(CONCAT('%', :q, '%'))) AND " +
            "(:type IS NULL OR t.type = :type)")
     Page<TagEntity> findByFilters(
         @Param("q") String query,
@@ -31,6 +30,10 @@ public interface TagRepository extends JpaRepository<TagEntity, Long> {
     );
     
     boolean existsByName(String name);
+
+    boolean existsByNameAndType(String name, TagType type);
+
+    List<TagEntity> findByNameIn(List<String> names);
 }
 
 
