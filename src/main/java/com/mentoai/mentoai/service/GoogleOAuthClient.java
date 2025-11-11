@@ -45,7 +45,8 @@ public class GoogleOAuthClient {
                 .queryParam("access_type", "offline")
                 .queryParam("prompt", "consent")
                 .queryParam("state", state)
-                .build(true)
+                .build()
+                .encode()
                 .toUri();
     }
 
