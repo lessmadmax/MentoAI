@@ -21,3 +21,4 @@ public interface UserRepository extends JpaRepository<UserEntity, Long> {
     Optional<UserEntity> findBySearchQuery(@Param("q") String query);
 }
 
+

@@ -66,3 +66,4 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
     List<ActivityEntity> findByIsCampus(Boolean isCampus);
 }
 
+

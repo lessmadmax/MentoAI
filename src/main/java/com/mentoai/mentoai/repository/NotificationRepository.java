@@ -42,3 +42,4 @@ public interface NotificationRepository extends JpaRepository<NotificationEntity
     void deleteByUserIdAndStatus(Long userId, NotificationStatus status);
 }
 
+
