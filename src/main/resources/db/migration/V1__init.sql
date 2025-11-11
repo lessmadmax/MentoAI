@@ -75,7 +75,7 @@ CREATE TABLE "tags" (
 CREATE TABLE "user_interests" (
   "user_id" bigint,
   "tag_id" bigint,
-  "weight" double
+  "weight" double precision
 );
 
 CREATE TABLE "activities" (
@@ -137,19 +137,19 @@ CREATE TABLE "target_roles" (
 CREATE TABLE "target_role_required_skills" (
   "role_id" text,
   "skill_name" text,
-  "weight" double
+  "weight" double precision
 );
 
 CREATE TABLE "target_role_bonus_skills" (
   "role_id" text,
   "skill_name" text,
-  "weight" double
+  "weight" double precision
 );
 
 CREATE TABLE "target_role_major_mapping" (
   "role_id" text,
   "major" text,
-  "weight" double
+  "weight" double precision
 );
 
 CREATE TABLE "target_role_recommended_certs" (

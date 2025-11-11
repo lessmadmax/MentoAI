@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -110,7 +111,9 @@ public class ActivityService {
         return activityRepository.findById(activityId)
                 .map(activity -> {
                     List<AttachmentEntity> attachments = activity.getAttachments();
-                    return attachments == null ? List.of() : List.copyOf(attachments);
+                    return attachments == null
+                            ? Collections.<AttachmentEntity>emptyList()
+                            : List.copyOf(attachments);
                 })
                 .orElseThrow(() -> new IllegalArgumentException("활동을 찾을 수 없습니다: " + activityId));
     }
