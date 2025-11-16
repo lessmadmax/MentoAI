@@ -118,9 +118,17 @@ public class RecommendService {
     
     // 의미 기반 검색 (간단한 키워드 매칭)
     public List<ActivityEntity> semanticSearch(String query, Integer limit, String userId) {
+        return semanticSearchWithScores(query, limit, userId).stream()
+                .map(SemanticSearchResult::activity)
+                .collect(Collectors.toList());
+    }
+
+    public List<SemanticSearchResult> semanticSearchWithScores(String query, Integer limit, String userId) {
         if (query == null || query.trim().isEmpty()) {
             throw new IllegalArgumentException("검색어는 필수입니다.");
         }
+
+        int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
         
         // 검색어 전처리 및 확장
         List<String> searchTerms = expandSearchTerms(query);
@@ -129,7 +137,7 @@ public class RecommendService {
         Map<ActivityEntity, Double> activityScores = new HashMap<>();
         
         for (String term : searchTerms) {
-            Pageable pageable = PageRequest.of(0, limit * 2, Sort.by(Sort.Direction.DESC, "createdAt"));
+            Pageable pageable = PageRequest.of(0, safeLimit * 2, Sort.by(Sort.Direction.DESC, "createdAt"));
             
             List<ActivityEntity> results = activityRepository.findByFilters(
                     term.toLowerCase(),
@@ -166,8 +174,8 @@ public class RecommendService {
         // 점수 순으로 정렬하여 반환
         return activityScores.entrySet().stream()
                 .sorted(Map.Entry.<ActivityEntity, Double>comparingByValue().reversed())
-                .limit(limit)
-                .map(Map.Entry::getKey)
+                .limit(safeLimit)
+                .map(entry -> new SemanticSearchResult(entry.getKey(), entry.getValue()))
                 .collect(Collectors.toList());
     }
     
@@ -283,5 +291,8 @@ public class RecommendService {
                 .filter(a -> !a.getId().equals(activityId))
                 .limit(limit)
                 .collect(Collectors.toList());
+    }
+
+    public record SemanticSearchResult(ActivityEntity activity, double score) {
     }
 }

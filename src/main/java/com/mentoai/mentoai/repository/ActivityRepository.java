@@ -35,18 +35,18 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
             (:deadlineBefore IS NULL OR d.dateValue <= :deadlineBefore)
         """)
     Page<ActivityEntity> search(
-            @Param("q") String query,
-            @Param("type") ActivityType type,
+        @Param("q") String query,
+        @Param("type") ActivityType type,
             @Param("tagNames") List<String> tagNames,
-            @Param("isCampus") Boolean isCampus,
-            @Param("status") ActivityStatus status,
+        @Param("isCampus") Boolean isCampus,
+        @Param("status") ActivityStatus status,
             @Param("deadlineBefore") LocalDateTime deadlineBefore,
             @Param("deadlineType") ActivityDateEntity.DateType deadlineType,
-            Pageable pageable
+        Pageable pageable
     );
-
+    
     List<ActivityEntity> findByStatus(ActivityStatus status);
-
+    
     List<ActivityEntity> findByIsCampus(Boolean isCampus);
 
     default Page<ActivityEntity> findByFilters(

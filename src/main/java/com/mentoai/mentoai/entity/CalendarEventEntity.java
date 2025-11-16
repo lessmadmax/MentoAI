@@ -14,35 +14,27 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class CalendarEventEntity {
-    
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "event_id")
     private Long id;
-    
+
     @Column(name = "user_id", nullable = false)
     private Long userId;
-    
-    @Column(nullable = false, length = 200)
-    private String title;
-    
-    @Column(columnDefinition = "TEXT")
-    private String description;
-    
-    @Column(length = 100)
-    private String location;
-    
-    @Column(name = "start_time")
-    private LocalDateTime startTime;
-    
-    @Column(name = "end_time")
-    private LocalDateTime endTime;
-    
+
     @Column(name = "activity_id")
     private Long activityId;
-    
-    @Column(name = "reminder_minutes")
-    private Integer reminderMinutes;
-    
+
+    @Column(name = "start_at")
+    private LocalDateTime startAt;
+
+    @Column(name = "end_at")
+    private LocalDateTime endAt;
+
+    @Column(name = "alert_minutes")
+    private Integer alertMinutes;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

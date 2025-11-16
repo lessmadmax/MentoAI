@@ -1,21 +1,32 @@
 package com.mentoai.mentoai.controller;
 
+import com.mentoai.mentoai.controller.dto.CalendarEventResponse;
+import com.mentoai.mentoai.controller.dto.CalendarEventUpsertRequest;
+import com.mentoai.mentoai.controller.dto.UserProfileResponse;
+import com.mentoai.mentoai.controller.dto.UserProfileUpsertRequest;
+import com.mentoai.mentoai.entity.CalendarEventEntity;
 import com.mentoai.mentoai.entity.UserEntity;
 import com.mentoai.mentoai.entity.UserInterestEntity;
-import com.mentoai.mentoai.entity.CalendarEventEntity;
-import com.mentoai.mentoai.service.UserService;
-import com.mentoai.mentoai.service.UserInterestService;
 import com.mentoai.mentoai.service.CalendarEventService;
+import com.mentoai.mentoai.service.UserInterestService;
+import com.mentoai.mentoai.service.UserProfileService;
+import com.mentoai.mentoai.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -28,6 +39,7 @@ public class UserController {
 
     private final UserService userService;
     private final UserInterestService userInterestService;
+    private final UserProfileService userProfileService;
     private final CalendarEventService calendarEventService;
 
     @PostMapping
@@ -47,7 +59,7 @@ public class UserController {
             @Parameter(description = "사용자 ID") @PathVariable Long id) {
         Optional<UserEntity> user = userService.getUser(id);
         return user.map(ResponseEntity::ok)
-                  .orElse(ResponseEntity.notFound().build());
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/{id}/interests")
@@ -75,30 +87,53 @@ public class UserController {
         }
     }
 
-    @GetMapping("/{id}/calendar")
-    @Operation(summary = "사용자 캘린더 이벤트 목록", description = "사용자의 캘린더 이벤트 목록을 반환합니다.")
-    public ResponseEntity<List<CalendarEventEntity>> listCalendarEvents(
-            @Parameter(description = "사용자 ID") @PathVariable Long id,
-            @Parameter(description = "시작 날짜") @RequestParam(required = false) String startDate,
-            @Parameter(description = "종료 날짜") @RequestParam(required = false) String endDate) {
-        try {
-            List<CalendarEventEntity> events = calendarEventService.getCalendarEvents(id, startDate, endDate);
-            return ResponseEntity.ok(events);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.notFound().build();
-        }
+    @GetMapping("/{id}/profile")
+    @Operation(summary = "사용자 프로필 조회", description = "확장 프로필 정보를 반환합니다.")
+    public ResponseEntity<UserProfileResponse> getProfile(
+            @Parameter(description = "사용자 ID") @PathVariable Long id) {
+        UserProfileResponse profile = userProfileService.getProfile(id);
+        return ResponseEntity.ok(profile);
     }
 
-    @PostMapping("/{id}/calendar")
-    @Operation(summary = "캘린더 이벤트 생성", description = "사용자의 캘린더에 이벤트를 추가합니다.")
-    public ResponseEntity<CalendarEventEntity> createCalendarEvent(
+    @PutMapping("/{id}/profile")
+    @Operation(summary = "사용자 프로필 갱신", description = "확장 프로필을 생성/업데이트합니다.")
+    public ResponseEntity<UserProfileResponse> upsertProfile(
             @Parameter(description = "사용자 ID") @PathVariable Long id,
-            @RequestBody Map<String, Object> event) {
-        try {
-            CalendarEventEntity createdEvent = calendarEventService.createCalendarEvent(id, event);
-            return ResponseEntity.status(HttpStatus.CREATED).body(createdEvent);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
-        }
+            @Valid @RequestBody UserProfileUpsertRequest request) {
+        UserProfileResponse profile = userProfileService.upsertProfile(id, request);
+        return ResponseEntity.ok(profile);
+    }
+
+    @GetMapping("/{id}/calendar/events")
+    @Operation(summary = "사용자 캘린더 이벤트 목록", description = "사용자의 캘린더 이벤트를 조회합니다.")
+    public ResponseEntity<List<CalendarEventResponse>> listCalendarEvents(
+            @Parameter(description = "사용자 ID") @PathVariable Long id,
+            @Parameter(description = "시작 날짜 (YYYY-MM-DD)") @RequestParam(required = false) String startDate,
+            @Parameter(description = "종료 날짜 (YYYY-MM-DD)") @RequestParam(required = false) String endDate) {
+        List<CalendarEventEntity> events = calendarEventService.getCalendarEvents(id, startDate, endDate);
+        return ResponseEntity.ok(events.stream().map(this::toCalendarEventResponse).toList());
+    }
+
+    @PostMapping("/{id}/calendar/events")
+    @Operation(summary = "캘린더 이벤트 생성", description = "사용자의 캘린더에 이벤트를 추가합니다.")
+    public ResponseEntity<CalendarEventResponse> createCalendarEvent(
+            @Parameter(description = "사용자 ID") @PathVariable Long id,
+            @Valid @RequestBody CalendarEventUpsertRequest request) {
+        CalendarEventEntity createdEvent = calendarEventService.createCalendarEvent(id, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(toCalendarEventResponse(createdEvent));
+    }
+
+    private CalendarEventResponse toCalendarEventResponse(CalendarEventEntity entity) {
+        return new CalendarEventResponse(
+            entity.getId(),
+            entity.getUserId(),
+            entity.getActivityId(),
+            entity.getStartAt(),
+            entity.getEndAt(),
+            entity.getAlertMinutes(),
+            entity.getCreatedAt()
+        );
     }
 }
+
+

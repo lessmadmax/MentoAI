@@ -30,7 +30,7 @@ public class TagController {
     public ResponseEntity<List<TagResponse>> listTags(
             @Parameter(description = "태그 유형 필터") @RequestParam(required = false) TagType type,
             @Parameter(description = "검색어") @RequestParam(required = false) String q) {
-
+        
         List<TagResponse> tags = tagService.getTags(q, type).stream()
                 .map(TagMapper::toResponse)
                 .toList();

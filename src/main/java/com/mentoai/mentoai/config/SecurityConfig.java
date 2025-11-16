@@ -23,15 +23,17 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .cors(cors -> {})
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                "/auth/**",
-                                "/docs/**",
-                                "/v3/api-docs/**",
-                                "/swagger-ui/**",
-                                "/swagger-resources/**"
+                                "/auth/google/start",
+                                "/auth/google/callback",
+                                "/auth/me",
+                                "/auth/refresh",
+                                "/auth/logout"
                         ).permitAll()
+                        .requestMatchers("/auth/**").permitAll()  // <-- 이건 맨 아래에 놓기
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
@@ -42,4 +44,6 @@ public class SecurityConfig {
     public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {
         return configuration.getAuthenticationManager();
     }
+
 }
+

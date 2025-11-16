@@ -96,7 +96,7 @@ public class NotificationService {
     @Async
     @Transactional
     public CompletableFuture<Void> createNewActivityNotification(ActivityEntity activity) {
-        log.info("새로운 활동 알림 생성: {}", activity.getTitle());
+        log.info("Creating new activity notification: {}", activity.getTitle());
         
         // 모든 사용자에게 기본 알림
         List<Long> allUserIds = userRepository.findAll().stream()
@@ -106,7 +106,7 @@ public class NotificationService {
         for (Long userId : allUserIds) {
             NotificationEntity notification = new NotificationEntity();
             notification.setUserId(userId);
-            notification.setTitle("새로운 활동이 등록되었습니다");
+            notification.setTitle("A new activity has been posted");
             notification.setMessage(activity.getTitle());
             notification.setType(NotificationType.NEW_ACTIVITY);
             notification.setStatus(NotificationStatus.ACTIVE);
@@ -115,7 +115,7 @@ public class NotificationService {
             notificationRepository.save(notification);
         }
         
-        // 관심사 매칭 사용자에게 추가 알림
+        // Additional notifications for users whose interests match
         createInterestMatchNotifications(activity);
         
         return CompletableFuture.completedFuture(null);
@@ -134,7 +134,7 @@ public class NotificationService {
                 .map(activityTag -> activityTag.getTag().getId())
                 .toList();
         
-        // 관심사가 매칭되는 사용자들 찾기
+        // Find users whose interests match
         List<UserInterestEntity> matchingInterests = userInterestRepository.findAll().stream()
                 .filter(interest -> activityTagIds.contains(interest.getTagId()))
                 .filter(interest -> interest.getScore() >= 3) // 점수 3 이상만
@@ -143,8 +143,8 @@ public class NotificationService {
         for (UserInterestEntity interest : matchingInterests) {
             NotificationEntity notification = new NotificationEntity();
             notification.setUserId(interest.getUserId());
-            notification.setTitle("관심사와 매칭되는 활동이 있습니다!");
-            notification.setMessage(activity.getTitle() + " - 당신의 관심사와 관련된 활동입니다.");
+            notification.setTitle("An activity matches your interests!");
+            notification.setMessage(activity.getTitle() + " - This activity matches your interests.");
             notification.setType(NotificationType.INTEREST_MATCH);
             notification.setStatus(NotificationStatus.ACTIVE);
             notification.setActivityId(activity.getId());
@@ -152,7 +152,7 @@ public class NotificationService {
             notificationRepository.save(notification);
         }
         
-        log.info("관심사 매칭 알림 생성 완료: {}명", matchingInterests.size());
+        log.info("Interest-match notifications created for {} users", matchingInterests.size());
         return CompletableFuture.completedFuture(null);
     }
     
@@ -160,12 +160,12 @@ public class NotificationService {
     @Async
     @Transactional
     public CompletableFuture<Void> createDeadlineReminderNotifications() {
-        log.info("마감 임박 알림 생성 시작");
+        log.info("Starting deadline reminder notifications");
         
         LocalDateTime threeDaysFromNow = LocalDateTime.now().plusDays(3);
         LocalDateTime now = LocalDateTime.now();
         
-        // 3일 이내 마감되는 활동들 조회
+        // Find activities that will close within 3 days
         List<ActivityEntity> upcomingDeadlines = activityRepository.findAll().stream()
                 .map(activity -> Map.entry(activity, extractApplyEndDate(activity)))
                 .filter(entry -> entry.getValue() != null)
@@ -175,12 +175,12 @@ public class NotificationService {
                 .toList();
         
         for (ActivityEntity activity : upcomingDeadlines) {
-            // 이미 알림을 보낸 활동인지 확인
+            // Check if reminders were already sent
             List<NotificationEntity> existingReminders = notificationRepository
                     .findDeadlineRemindersByActivityId(activity.getId());
             
             if (existingReminders.isEmpty()) {
-                // 모든 사용자에게 마감 알림
+                // Send deadline reminders to all users
                 List<Long> allUserIds = userRepository.findAll().stream()
                         .map(user -> user.getId())
                         .toList();
@@ -188,8 +188,8 @@ public class NotificationService {
                 for (Long userId : allUserIds) {
                     NotificationEntity notification = new NotificationEntity();
                     notification.setUserId(userId);
-                    notification.setTitle("마감 임박 알림");
-                    notification.setMessage(activity.getTitle() + " - 마감이 3일 남았습니다.");
+                    notification.setTitle("Deadline reminder");
+                    notification.setMessage(activity.getTitle() + " - 3 days left until the deadline.");
                     notification.setType(NotificationType.DEADLINE_REMINDER);
                     notification.setStatus(NotificationStatus.ACTIVE);
                     notification.setActivityId(activity.getId());
@@ -199,7 +199,7 @@ public class NotificationService {
             }
         }
         
-        log.info("마감 임박 알림 생성 완료: {}개 활동", upcomingDeadlines.size());
+        log.info("Deadline reminders created for {} activities", upcomingDeadlines.size());
         return CompletableFuture.completedFuture(null);
     }
 
@@ -224,14 +224,14 @@ public class NotificationService {
         
         NotificationEntity notification = new NotificationEntity();
         notification.setUserId(userId);
-        notification.setTitle("새로운 추천 활동이 있습니다!");
-        notification.setMessage(recommendations.size() + "개의 맞춤 추천 활동을 확인해보세요.");
+        notification.setTitle("New recommended activities are available!");
+        notification.setMessage("Check out " + recommendations.size() + " personalized recommendations.");
         notification.setType(NotificationType.RECOMMENDATION);
         notification.setStatus(NotificationStatus.ACTIVE);
         
         notificationRepository.save(notification);
         
-        log.info("추천 알림 생성 완료: 사용자 {}, {}개 추천", userId, recommendations.size());
+        log.info("Recommendation notification created: user={}, recommendations={}", userId, recommendations.size());
         return CompletableFuture.completedFuture(null);
     }
     
@@ -253,7 +253,7 @@ public class NotificationService {
             notificationRepository.save(notification);
         }
         
-        log.info("시스템 공지 생성 완료: {}명에게 전송", allUserIds.size());
+        log.info("System announcement created and sent to {} users", allUserIds.size());
     }
     
     // 오래된 알림 정리

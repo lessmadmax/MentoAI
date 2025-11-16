@@ -27,31 +27,31 @@ import java.util.List;
 @AllArgsConstructor
 @Builder
 public class UserEntity {
-
+    
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "user_id")
     private Long id;
-
+    
     @Enumerated(EnumType.STRING)
     @Column(name = "auth_provider", nullable = false, length = 30)
     private AuthProvider authProvider;
 
     @Column(name = "provider_user_id", nullable = false, length = 200)
     private String providerUserId;
-
+    
     @Column(nullable = false, length = 200)
     private String email;
-
+    
     @Column(nullable = false, length = 120)
     private String name;
 
     @Column(length = 120)
     private String nickname;
-
+    
     @Column(name = "profile_image_url", length = 500)
     private String profileImageUrl;
-
+    
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

@@ -33,8 +33,10 @@ class UserServiceTest {
         testUser.setId(1L);
         testUser.setName("테스트 사용자");
         testUser.setEmail("test@example.com");
-        testUser.setMajor("컴퓨터공학과");
-        testUser.setGrade(3);
+        testUser.setNickname("테스터");
+        testUser.setProfileImageUrl("https://example.com/avatar.png");
+        testUser.setProviderUserId("google-123");
+        testUser.setAuthProvider(UserEntity.AuthProvider.GOOGLE);
     }
 
     @Test
@@ -103,12 +105,10 @@ class UserServiceTest {
         // Given
         UserEntity updatedUser = new UserEntity();
         updatedUser.setName("수정된 이름");
-        updatedUser.setEmail("updated@example.com");
-        updatedUser.setMajor("소프트웨어학과");
-        updatedUser.setGrade(4);
+        updatedUser.setNickname("새 닉네임");
+        updatedUser.setProfileImageUrl("https://example.com/new-avatar.png");
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
-        when(userRepository.save(any(UserEntity.class))).thenReturn(testUser);
 
         // When
         Optional<UserEntity> result = userService.updateUser(1L, updatedUser);
@@ -116,8 +116,10 @@ class UserServiceTest {
         // Then
         assertTrue(result.isPresent());
         assertEquals("수정된 이름", result.get().getName());
+        assertEquals("새 닉네임", result.get().getNickname());
+        assertEquals("https://example.com/new-avatar.png", result.get().getProfileImageUrl());
         verify(userRepository, times(1)).findById(1L);
-        verify(userRepository, times(1)).save(any(UserEntity.class));
+        verify(userRepository, never()).save(any(UserEntity.class));
     }
 
     @Test
@@ -151,6 +153,12 @@ class UserServiceTest {
         verify(userRepository, never()).deleteById(999L);
     }
 }
+
+
+
+
+
+
 
 
 

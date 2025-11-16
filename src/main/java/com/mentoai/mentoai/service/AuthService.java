@@ -1,31 +1,30 @@
 package com.mentoai.mentoai.service;
 
-import com.mentoai.mentoai.config.AuthProperties;
-import com.mentoai.mentoai.controller.dto.AuthResponse;
+import com.mentoai.mentoai.controller.dto.AuthResult;
 import com.mentoai.mentoai.controller.dto.AuthTokens;
 import com.mentoai.mentoai.controller.dto.GoogleTokenResponse;
 import com.mentoai.mentoai.controller.dto.GoogleUserInfo;
 import com.mentoai.mentoai.entity.RefreshTokenEntity;
 import com.mentoai.mentoai.entity.UserEntity;
+import com.mentoai.mentoai.exception.UnauthorizedException;
 import com.mentoai.mentoai.repository.RefreshTokenRepository;
 import com.mentoai.mentoai.security.JwtTokenProvider;
-import com.mentoai.mentoai.exception.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.Optional;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.util.UriComponentsBuilder;
-import org.springframework.http.ResponseEntity;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +32,7 @@ import org.springframework.http.ResponseEntity;
 public class AuthService {
 
     private static final String OAUTH_STATE_SESSION_KEY = "OAUTH_STATE";
+    private static final String OAUTH_FRONTEND_REDIRECT_SESSION_KEY = "OAUTH_FRONTEND_REDIRECT";
 
     private final GoogleOAuthClient googleOAuthClient;
     private final UserService userService;
@@ -40,6 +40,13 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
 
     private final SecureRandom secureRandom = new SecureRandom();
+
+    public void rememberFrontendRedirect(HttpServletRequest request, String redirectUri) {
+        if (!StringUtils.hasText(redirectUri)) {
+            return;
+        }
+        request.getSession(true).setAttribute(OAUTH_FRONTEND_REDIRECT_SESSION_KEY, redirectUri);
+    }
 
     public URI buildAuthorizationRedirect(HttpServletRequest request) {
         String state = generateState();
@@ -49,8 +56,17 @@ public class AuthService {
     }
 
     @Transactional
-    public ResponseEntity<Void> handleCallback(String code, String state, HttpServletRequest request) {
-        validateState(state, request.getSession(false));
+    public ResponseEntity<?> handleCallback(
+            String code,
+            String state,
+            String mode,
+            String redirectOverride,
+            HttpServletRequest request
+    ) {
+        System.out.println(">>> [AuthService] handleCallback started");
+        System.out.println(">>> mode: " + mode);
+        System.out.println(">>> redirectOverride: " + redirectOverride);        HttpSession session = request.getSession(false);
+        validateState(state, session);
         boolean useLocal = isLocalRequest(request);
 
         GoogleTokenResponse tokenResponse = googleOAuthClient.exchangeCodeForToken(code, useLocal);
@@ -66,12 +82,27 @@ public class AuthService {
         );
 
         AuthTokens tokens = issueTokens(user);
-        clearState(request.getSession(false));
+        clearState(session);
+        String frontendRedirect = consumeFrontendRedirect(session, redirectOverride);
 
-        URI redirectUri = buildFrontendRedirect(tokens);
+        System.out.println(">>> frontendRedirect: " + frontendRedirect);
+        System.out.println(">>> tokens issued");
+
+
+        if ("json".equalsIgnoreCase(mode)) {
+            return ResponseEntity.ok(AuthResult.of(user, tokens));
+        }
+        try {
+        URI redirectUri = buildFrontendRedirect(tokens, frontendRedirect);
+        System.out.println(">>> redirecting to: " + redirectUri);
         HttpHeaders headers = new HttpHeaders();
         headers.setLocation(redirectUri);
         return new ResponseEntity<>(headers, HttpStatus.FOUND);
+        } catch (Exception e) {
+        System.err.println(">>> Failed to build redirect URI: " + e.getMessage());
+        e.printStackTrace();
+        throw e;
+        }
     }
 
     private AuthTokens issueTokens(UserEntity user) {
@@ -139,8 +170,8 @@ public class AuthService {
         return host != null && host.contains("localhost");
     }
 
-    private URI buildFrontendRedirect(AuthTokens tokens) {
-        return UriComponentsBuilder.fromUriString(googleOAuthClient.getFrontendCallbackUri())
+    private URI buildFrontendRedirect(AuthTokens tokens, String frontendCallback) {
+        return UriComponentsBuilder.fromUriString(frontendCallback)
                 .fragment(String.format("accessToken=%s&refreshToken=%s&tokenType=%s&expiresIn=%d",
                         tokens.accessToken(),
                         tokens.refreshToken(),
@@ -148,5 +179,25 @@ public class AuthService {
                         tokens.expiresIn()))
                 .build(true)
                 .toUri();
+    }
+
+    private String consumeFrontendRedirect(HttpSession session, String redirectOverride) {
+        String redirect = StringUtils.hasText(redirectOverride) ? redirectOverride : null;
+        System.out.println(">>> redirectOverride value: " + redirect);
+        if (!StringUtils.hasText(redirect) && session != null) {
+            Object value = session.getAttribute(OAUTH_FRONTEND_REDIRECT_SESSION_KEY);
+            System.out.println(">>> redirect from session: " + value);
+            if (value instanceof String saved) {
+                redirect = saved;
+            }
+        }
+        if (session != null) {
+            session.removeAttribute(OAUTH_FRONTEND_REDIRECT_SESSION_KEY);
+        }
+        if (!StringUtils.hasText(redirect)) {
+            redirect = googleOAuthClient.getFrontendCallbackUri();
+            System.out.println(">>> using default frontendCallbackUri: " + redirect);
+        }
+        return redirect;
     }
 }

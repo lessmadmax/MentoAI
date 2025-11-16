@@ -1,9 +1,11 @@
 package com.mentoai.mentoai.service;
 
+import com.mentoai.mentoai.controller.dto.ActivityUpsertRequest;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.repository.ActivityRepository;
+import com.mentoai.mentoai.repository.TagRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.DisplayName;
@@ -29,6 +31,9 @@ class ActivityServiceTest {
     private ActivityRepository activityRepository;
 
     @Mock
+    private TagRepository tagRepository;
+
+    @Mock
     private NotificationService notificationService;
 
     @InjectMocks
@@ -48,18 +53,20 @@ class ActivityServiceTest {
         testActivity.setType(ActivityType.STUDY);
         testActivity.setOrganizer("테스트 주최자");
         testActivity.setIsCampus(true);
-        testActivity.setStatus(ActivityStatus.ACTIVE);
+        testActivity.setStatus(ActivityStatus.OPEN);
     }
 
     @Test
     @DisplayName("활동 생성 테스트")
     void createActivity_Success() {
         // Given
+        ActivityUpsertRequest request = sampleRequest();
         when(activityRepository.save(any(ActivityEntity.class))).thenReturn(testActivity);
-        // CompletableFuture 반환하는 비동기 메서드 모킹은 생략 (실제 호출되지만 테스트에 영향 없음)
+        when(notificationService.createNewActivityNotification(any(ActivityEntity.class)))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
 
         // When
-        ActivityEntity result = activityService.createActivity(testActivity);
+        ActivityEntity result = activityService.createActivity(request);
 
         // Then
         assertNotNull(result);
@@ -104,13 +111,13 @@ class ActivityServiceTest {
         List<ActivityEntity> activities = Arrays.asList(testActivity);
         Page<ActivityEntity> page = new PageImpl<>(activities);
         
-        when(activityRepository.findByFilters(
-            any(), any(), any(), any(), any(Pageable.class)))
-            .thenReturn(page);
+        when(activityRepository.search(
+                any(), any(), any(), any(), any(), any(), any(), any(Pageable.class)))
+                .thenReturn(page);
 
         // When
         Page<ActivityEntity> result = activityService.getActivities(
-            null, null, null, null, null, 0, 20, "createdAt", "desc");
+            null, null, null, null, null, null, 0, 20, "createdAt", "desc");
 
         // Then
         assertNotNull(result);
@@ -122,19 +129,26 @@ class ActivityServiceTest {
     @DisplayName("활동 수정 테스트 - 성공")
     void updateActivity_Success() {
         // Given
-        ActivityEntity updatedActivity = new ActivityEntity();
-        updatedActivity.setTitle("수정된 활동");
-        updatedActivity.setContent("수정된 내용");
-        updatedActivity.setType(ActivityType.CONTEST);
-        updatedActivity.setOrganizer("수정된 주최자");
-        updatedActivity.setIsCampus(false);
-        updatedActivity.setStatus(ActivityStatus.ACTIVE);
+        ActivityUpsertRequest updateRequest = new ActivityUpsertRequest(
+                "수정된 활동",
+                "요약",
+                "수정된 내용",
+                ActivityType.CONTEST.name(),
+                "수정된 주최자",
+                "서울",
+                "https://example.com",
+                false,
+                ActivityStatus.CLOSED.name(),
+                null,
+                null,
+                null
+        );
 
         when(activityRepository.findById(1L)).thenReturn(Optional.of(testActivity));
         when(activityRepository.save(any(ActivityEntity.class))).thenReturn(testActivity);
 
         // When
-        Optional<ActivityEntity> result = activityService.updateActivity(1L, updatedActivity);
+        Optional<ActivityEntity> result = activityService.updateActivity(1L, updateRequest);
 
         // Then
         assertTrue(result.isPresent());
@@ -179,7 +193,7 @@ class ActivityServiceTest {
     void getActiveActivities_Success() {
         // Given
         List<ActivityEntity> activeActivities = Arrays.asList(testActivity);
-        when(activityRepository.findByStatus(ActivityStatus.ACTIVE))
+        when(activityRepository.findByStatus(ActivityStatus.OPEN))
             .thenReturn(activeActivities);
 
         // When
@@ -188,8 +202,8 @@ class ActivityServiceTest {
         // Then
         assertNotNull(result);
         assertEquals(1, result.size());
-        assertEquals(ActivityStatus.ACTIVE, result.get(0).getStatus());
-        verify(activityRepository, times(1)).findByStatus(ActivityStatus.ACTIVE);
+        assertEquals(ActivityStatus.OPEN, result.get(0).getStatus());
+        verify(activityRepository, times(1)).findByStatus(ActivityStatus.OPEN);
     }
 
     @Test
@@ -208,6 +222,23 @@ class ActivityServiceTest {
         assertEquals(1, result.size());
         assertTrue(result.get(0).getIsCampus());
         verify(activityRepository, times(1)).findByIsCampus(true);
+    }
+
+    private ActivityUpsertRequest sampleRequest() {
+        return new ActivityUpsertRequest(
+                "테스트 활동",
+                "요약",
+                "테스트 내용입니다.",
+                ActivityType.STUDY.name(),
+                "테스트 주최자",
+                "서울",
+                "https://example.com",
+                true,
+                ActivityStatus.OPEN.name(),
+                null,
+                null,
+                null
+        );
     }
 }
 

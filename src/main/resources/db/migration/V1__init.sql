@@ -1,4 +1,4 @@
-   -- ========= ENUMS =========
+-- ========= ENUMS =========
 CREATE TYPE auth_provider AS ENUM ('GOOGLE');
 CREATE TYPE activity_type AS ENUM ('JOB','CONTEST','STUDY','CAMPUS');
 CREATE TYPE activity_status AS ENUM ('OPEN','CLOSED','CANCELLED');

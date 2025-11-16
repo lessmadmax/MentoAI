@@ -17,9 +17,9 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEventEnti
     
     // 특정 사용자의 특정 날짜 범위 이벤트 조회
     @Query("SELECT ce FROM CalendarEventEntity ce WHERE ce.userId = :userId " +
-           "AND (:startDate IS NULL OR ce.startTime >= :startDate) " +
-           "AND (:endDate IS NULL OR ce.endTime <= :endDate) " +
-           "ORDER BY ce.startTime ASC")
+           "AND (:startDate IS NULL OR ce.startAt >= :startDate) " +
+           "AND (:endDate IS NULL OR ce.endAt <= :endDate) " +
+           "ORDER BY ce.startAt ASC")
     List<CalendarEventEntity> findByUserIdAndDateRange(
             @Param("userId") Long userId,
             @Param("startDate") LocalDateTime startDate,
@@ -27,16 +27,16 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEventEnti
     
     // 특정 사용자의 특정 날짜 이벤트 조회
     @Query("SELECT ce FROM CalendarEventEntity ce WHERE ce.userId = :userId " +
-           "AND DATE(ce.startTime) = DATE(:date) " +
-           "ORDER BY ce.startTime ASC")
+           "AND DATE(ce.startAt) = DATE(:date) " +
+           "ORDER BY ce.startAt ASC")
     List<CalendarEventEntity> findByUserIdAndDate(
             @Param("userId") Long userId,
             @Param("date") LocalDateTime date);
     
     // 특정 사용자의 특정 월 이벤트 조회
     @Query("SELECT ce FROM CalendarEventEntity ce WHERE ce.userId = :userId " +
-           "AND YEAR(ce.startTime) = :year AND MONTH(ce.startTime) = :month " +
-           "ORDER BY ce.startTime ASC")
+           "AND YEAR(ce.startAt) = :year AND MONTH(ce.startAt) = :month " +
+           "ORDER BY ce.startAt ASC")
     List<CalendarEventEntity> findByUserIdAndMonth(
             @Param("userId") Long userId,
             @Param("year") int year,
@@ -44,8 +44,8 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEventEnti
     
     // 특정 사용자의 다가오는 이벤트 조회
     @Query("SELECT ce FROM CalendarEventEntity ce WHERE ce.userId = :userId " +
-           "AND ce.startTime > :now " +
-           "ORDER BY ce.startTime ASC")
+           "AND ce.startAt > :now " +
+           "ORDER BY ce.startAt ASC")
     List<CalendarEventEntity> findUpcomingEventsByUserId(
             @Param("userId") Long userId,
             @Param("now") LocalDateTime now);
@@ -56,6 +56,12 @@ public interface CalendarEventRepository extends JpaRepository<CalendarEventEnti
     // 특정 사용자의 이벤트 개수 조회
     long countByUserId(Long userId);
 }
+
+
+
+
+
+
 
 
 

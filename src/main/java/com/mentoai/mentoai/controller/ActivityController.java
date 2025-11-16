@@ -41,12 +41,12 @@ public class ActivityController {
             @Parameter(description = "페이지 번호 (1부터 시작)") @RequestParam(defaultValue = "1") Integer page,
             @Parameter(description = "페이지 크기") @RequestParam(defaultValue = "20") Integer size,
             @Parameter(description = "정렬 키 (createdAt, deadline, popularity 등)") @RequestParam(defaultValue = "createdAt,desc") String sort) {
-
+        
         List<String> tagNames = null;
         if (tag != null && !tag.trim().isEmpty()) {
             tagNames = Arrays.asList(tag.split(","));
         }
-
+        
         String sortField = "createdAt";
         String direction = "desc";
         if (sort != null && !sort.isBlank()) {
@@ -85,7 +85,7 @@ public class ActivityController {
                 result.getTotalElements(),
                 items
         );
-
+        
         return ResponseEntity.ok(response);
     }
 
@@ -119,7 +119,7 @@ public class ActivityController {
             Optional<com.mentoai.mentoai.entity.ActivityEntity> updatedActivity = activityService.updateActivity(id, request);
             return updatedActivity.map(ActivityMapper::toResponse)
                                  .map(ResponseEntity::ok)
-                                 .orElse(ResponseEntity.notFound().build());
+                             .orElse(ResponseEntity.notFound().build());
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().build();
         }
