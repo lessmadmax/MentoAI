@@ -37,33 +37,37 @@ public class UserProfileService {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        UserProfileEntity profile = userProfileRepository.findById(userId)
-                .orElseGet(() -> {
-                    UserProfileEntity newProfile = new UserProfileEntity();
-                    newProfile.setUserId(userId);
-                    newProfile.setUser(user);
-                    // 리스트 초기화 보장
-                    if (newProfile.getInterestDomains() == null) {
-                        newProfile.setInterestDomains(new ArrayList<>());
-                    }
-                    if (newProfile.getTechStack() == null) {
-                        newProfile.setTechStack(new ArrayList<>());
-                    }
-                    if (newProfile.getAwards() == null) {
-                        newProfile.setAwards(new ArrayList<>());
-                    }
-                    if (newProfile.getCertifications() == null) {
-                        newProfile.setCertifications(new ArrayList<>());
-                    }
-                    if (newProfile.getExperiences() == null) {
-                        newProfile.setExperiences(new ArrayList<>());
-                    }
-                    return newProfile;
-                });
+        // 기존 프로필 존재 여부 확인
+        boolean exists = userProfileRepository.existsById(userId);
+        
+        UserProfileEntity profile;
+        
+        if (!exists) {
+            // 새로 생성된 경우: 먼저 빈 엔티티를 저장
+            profile = new UserProfileEntity();
+            profile.setUserId(userId);
+            profile.setUser(user);
+            profile.setInterestDomains(new ArrayList<>());
+            profile.setTechStack(new ArrayList<>());
+            profile.setAwards(new ArrayList<>());
+            profile.setCertifications(new ArrayList<>());
+            profile.setExperiences(new ArrayList<>());
+            
+            // 먼저 저장하여 관리 상태로 만듦
+            profile = userProfileRepository.saveAndFlush(profile);
+            
+            // 저장 후 다시 로드하여 완전한 관리 상태 보장
+            profile = userProfileRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalStateException("Failed to save new profile"));
+        } else {
+            // 기존 프로필 로드
+            profile = userProfileRepository.findById(userId)
+                    .orElseThrow(() -> new IllegalArgumentException("Profile not found: " + userId));
+        }
 
+        // 이제 안전하게 수정 가능
         UserProfileMapper.apply(profile, request);
         
-        // saveAndFlush를 사용하여 즉시 DB에 반영하고 엔티티 상태 동기화
         UserProfileEntity saved = userProfileRepository.saveAndFlush(profile);
         
         return UserProfileMapper.toResponse(saved);
