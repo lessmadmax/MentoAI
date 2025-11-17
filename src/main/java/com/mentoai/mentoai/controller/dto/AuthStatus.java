@@ -6,20 +6,20 @@ import com.mentoai.mentoai.entity.UserEntity;
 public record AuthStatus(
         boolean isAuthenticated,
         UserSummary user,
-        String provider
+        String provider,
+        boolean profileComplete  // 추가
 ) {
 
     public static AuthStatus anonymous() {
-        return new AuthStatus(false, null, null);
+        return new AuthStatus(false, null, null, false);
     }
 
-    public static AuthStatus authenticated(UserEntity userEntity) {
+    public static AuthStatus authenticated(UserEntity userEntity, boolean profileComplete) {
         return new AuthStatus(
                 true,
                 UserMapper.toSummary(userEntity),
-                userEntity.getAuthProvider() != null ? userEntity.getAuthProvider().name() : null
+                userEntity.getAuthProvider() != null ? userEntity.getAuthProvider().name() : null,
+                profileComplete
         );
     }
 }
-
-

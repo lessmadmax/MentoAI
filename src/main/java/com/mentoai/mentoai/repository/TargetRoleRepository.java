@@ -7,3 +7,5 @@ public interface TargetRoleRepository extends JpaRepository<TargetRoleEntity, St
 }
 
 
+
+

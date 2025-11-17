@@ -1,26 +1,27 @@
 package com.mentoai.mentoai.controller;
 
-import com.mentoai.mentoai.controller.dto.AuthStatus;
+import com.mentoai.mentoai.controller.dto.AuthResponse;
 import com.mentoai.mentoai.controller.dto.AuthTokens;
+import com.mentoai.mentoai.controller.dto.AuthStatus;
+import com.mentoai.mentoai.controller.dto.UserSummary;
+import com.mentoai.mentoai.controller.mapper.UserMapper;
 import com.mentoai.mentoai.entity.UserEntity;
 import com.mentoai.mentoai.security.UserPrincipal;
 import com.mentoai.mentoai.service.AuthService;
 import com.mentoai.mentoai.service.UserService;
+import com.mentoai.mentoai.service.UserProfileService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import org.springframework.transaction.annotation.Transactional;
 
 @RestController
 @RequestMapping("/auth")
@@ -29,14 +30,10 @@ public class AuthController {
 
     private final AuthService authService;
     private final UserService userService;
+    private final UserProfileService userProfileService;
 
     @GetMapping("/google/start")
-    public ResponseEntity<Void> startGoogleOAuth(
-            @RequestParam(required = false) String redirectUri,
-            HttpServletRequest request
-    ) {
-        System.out.println(redirectUri);
-        authService.rememberFrontendRedirect(request, redirectUri);
+    public ResponseEntity<Void> startGoogleOAuth(HttpServletRequest request) {
         URI redirect = authService.buildAuthorizationRedirect(request);
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(redirect)
@@ -44,15 +41,12 @@ public class AuthController {
     }
 
     @GetMapping("/google/callback")
-    public ResponseEntity<?> googleCallback(
+    public ResponseEntity<Void> googleCallback(
             @RequestParam String code,
             @RequestParam(required = false) String state,
-            @RequestParam(defaultValue = "redirect") String mode,
-            @RequestParam(required = false) String redirectUri,
             HttpServletRequest request
     ) {
-        System.out.println(">>> [AuthController] /auth/google/callback invoked");
-        return authService.handleCallback(code, state, mode, redirectUri, request);
+        return authService.handleCallback(code, state, request);
     }
 
     @PostMapping("/refresh")
@@ -68,7 +62,8 @@ public class AuthController {
         }
         UserEntity user = userService.getUser(principal.id())
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
-        return ResponseEntity.ok(AuthStatus.authenticated(user));
+        boolean profileComplete = userProfileService.isProfileComplete(principal.id());
+        return ResponseEntity.ok(AuthStatus.authenticated(user, profileComplete));
     }
 
     @PostMapping("/logout")

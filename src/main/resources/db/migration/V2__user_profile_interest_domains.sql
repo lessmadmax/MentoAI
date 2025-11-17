@@ -12,3 +12,5 @@ ALTER TABLE user_profile_interest_domains
     ON DELETE CASCADE;
 
 
+
+

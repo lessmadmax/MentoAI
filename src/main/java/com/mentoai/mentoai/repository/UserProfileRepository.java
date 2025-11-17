@@ -7,3 +7,5 @@ public interface UserProfileRepository extends JpaRepository<UserProfileEntity, 
 }
 
 
+
+
