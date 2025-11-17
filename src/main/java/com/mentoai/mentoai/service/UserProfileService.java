@@ -62,7 +62,10 @@ public class UserProfileService {
                 });
 
         UserProfileMapper.apply(profile, request);
-        UserProfileEntity saved = userProfileRepository.save(profile);
+        
+        // saveAndFlush를 사용하여 즉시 DB에 반영하고 엔티티 상태 동기화
+        UserProfileEntity saved = userProfileRepository.saveAndFlush(profile);
+        
         return UserProfileMapper.toResponse(saved);
     }
 
