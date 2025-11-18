@@ -20,7 +20,6 @@ import com.mentoai.mentoai.entity.WeightedSkill;
 import com.mentoai.mentoai.repository.TargetRoleRepository;
 import com.mentoai.mentoai.repository.UserProfileRepository;
 import com.mentoai.mentoai.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,15 +37,24 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class RoleFitService {
 
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final TargetRoleRepository targetRoleRepository;
-    @Lazy
     private final RecommendService recommendService;
+
+    public RoleFitService(
+            UserRepository userRepository,
+            UserProfileRepository userProfileRepository,
+            TargetRoleRepository targetRoleRepository,
+            @Lazy RecommendService recommendService) {
+        this.userRepository = userRepository;
+        this.userProfileRepository = userProfileRepository;
+        this.targetRoleRepository = targetRoleRepository;
+        this.recommendService = recommendService;
+    }
 
     public RoleFitResponse calculateRoleFit(Long userId, RoleFitRequest request) {
         UserEntity user = getUser(userId);
