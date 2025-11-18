@@ -22,7 +22,7 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
         FROM ActivityEntity a
         LEFT JOIN a.activityTags at
         LEFT JOIN at.tag t
-        LEFT JOIN a.dates d ON d.activity = a AND (:deadlineType IS NULL OR d.dateType = :deadlineType)
+        LEFT JOIN a.dates d ON d.activity = a
         WHERE
             (:q IS NULL OR :q = '' OR
              LOWER(a.title) LIKE LOWER(CONCAT('%', :q, '%')) OR
@@ -32,7 +32,8 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
             (:isCampus IS NULL OR a.isCampus = :isCampus) AND
             (:status IS NULL OR a.status = :status) AND
             (:tagNames IS NULL OR t.name IN :tagNames) AND
-            (:deadlineBefore IS NULL OR d.dateValue <= :deadlineBefore)
+            (d.id IS NULL OR :deadlineType IS NULL OR d.dateType = :deadlineType) AND
+            (d.id IS NULL OR :deadlineBefore IS NULL OR d.dateValue <= :deadlineBefore)
         """)
     Page<ActivityEntity> search(
         @Param("q") String query,
