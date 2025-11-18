@@ -131,6 +131,10 @@ public class ActivityService {
                 .map(UserInterestEntity::getTagId)
                 .collect(Collectors.toList());
         
+        // 최소 점수 임계값 설정 (예: 5.0)
+        // 관심사 태그가 하나도 매칭되지 않으면 최소 점수도 받지 못함
+        double MIN_SCORE_THRESHOLD = 5.0;
+        
         // 활동별 점수 계산 및 정렬
         Map<ActivityEntity, Double> activityScores = new HashMap<>();
         for (ActivityEntity activity : filteredActivities.getContent()) {
@@ -164,7 +168,8 @@ public class ActivityService {
                 score += 2.0;
             }
             
-            if (score > 0) {
+            // 최소 점수 임계값 이상인 활동만 추가
+            if (score >= MIN_SCORE_THRESHOLD) {
                 activityScores.put(activity, score);
             }
         }
@@ -175,11 +180,7 @@ public class ActivityService {
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toList());
         
-        // 점수가 0인 활동도 추가 (점수 순 정렬 후)
-        List<ActivityEntity> zeroScoreActivities = filteredActivities.getContent().stream()
-                .filter(a -> !activityScores.containsKey(a))
-                .collect(Collectors.toList());
-        personalizedList.addAll(zeroScoreActivities);
+        // 점수가 0인 활동 추가 로직 제거 (이미 필터링됨)
         
         // 페이지네이션 적용
         int start = (int) pageable.getOffset();
