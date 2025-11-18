@@ -26,15 +26,7 @@ public class SecurityConfig {
                 .cors(cors -> {})
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                "/auth/google/start",
-                                "/auth/google/callback",
-                                "/auth/me",
-                                "/auth/refresh",
-                                "/auth/logout"
-                        ).permitAll()
-                        .requestMatchers("/auth/**").permitAll()  // <-- 이건 맨 아래에 놓기
-                        .anyRequest().authenticated()
+                        .anyRequest().permitAll()  // 모든 API 접근 허용
                 )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
