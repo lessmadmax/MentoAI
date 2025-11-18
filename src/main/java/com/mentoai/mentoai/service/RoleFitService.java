@@ -21,6 +21,7 @@ import com.mentoai.mentoai.repository.TargetRoleRepository;
 import com.mentoai.mentoai.repository.UserProfileRepository;
 import com.mentoai.mentoai.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -44,6 +45,7 @@ public class RoleFitService {
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
     private final TargetRoleRepository targetRoleRepository;
+    @Lazy
     private final RecommendService recommendService;
 
     public RoleFitResponse calculateRoleFit(Long userId, RoleFitRequest request) {
