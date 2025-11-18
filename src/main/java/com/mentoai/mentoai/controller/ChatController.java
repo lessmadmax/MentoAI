@@ -19,7 +19,8 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/chat")
-@Tag(name = "chat", description = "AI 챗봇 대화 API")
+@Tag(name = "chat", description = "AI 챗봇 대화 API (Deprecated - 자유로운 대화 기능은 제거됨)")
+@Deprecated
 @RequiredArgsConstructor
 public class ChatController {
 

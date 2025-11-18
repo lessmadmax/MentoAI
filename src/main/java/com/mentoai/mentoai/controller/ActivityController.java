@@ -102,23 +102,23 @@ public class ActivityController {
         }
     }
 
-    @GetMapping("/{id}")
+    @GetMapping("/{activityId}")
     @Operation(summary = "활동 상세 조회", description = "특정 활동의 상세 정보를 반환합니다.")
     public ResponseEntity<ActivityResponse> getActivity(
-            @Parameter(description = "활동 ID") @PathVariable Long id) {
-        Optional<com.mentoai.mentoai.entity.ActivityEntity> activity = activityService.getActivity(id);
+            @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId) {
+        Optional<com.mentoai.mentoai.entity.ActivityEntity> activity = activityService.getActivity(activityId);
         return activity.map(ActivityMapper::toResponse)
                        .map(ResponseEntity::ok)
                      .orElse(ResponseEntity.notFound().build());
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/{activityId}")
     @Operation(summary = "활동 수정", description = "기존 활동 정보를 수정합니다.")
     public ResponseEntity<ActivityResponse> updateActivity(
-            @Parameter(description = "활동 ID") @PathVariable Long id,
+            @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId,
             @Valid @RequestBody ActivityUpsertRequest request) {
         try {
-            Optional<com.mentoai.mentoai.entity.ActivityEntity> updatedActivity = activityService.updateActivity(id, request);
+            Optional<com.mentoai.mentoai.entity.ActivityEntity> updatedActivity = activityService.updateActivity(activityId, request);
             return updatedActivity.map(ActivityMapper::toResponse)
                                  .map(ResponseEntity::ok)
                              .orElse(ResponseEntity.notFound().build());
@@ -127,20 +127,20 @@ public class ActivityController {
         }
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/{activityId}")
     @Operation(summary = "활동 삭제", description = "활동을 삭제합니다.")
     public ResponseEntity<Void> deleteActivity(
-            @Parameter(description = "활동 ID") @PathVariable Long id) {
-        boolean deleted = activityService.deleteActivity(id);
+            @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId) {
+        boolean deleted = activityService.deleteActivity(activityId);
         return deleted ? ResponseEntity.ok().build() : ResponseEntity.notFound().build();
     }
 
-    @GetMapping("/{id}/attachments")
-    @Operation(summary = "활동 첨부파일 목록", description = "특정 활동의 첨부파일 목록을 반환합니다.")
+    @GetMapping("/{activityId}/attachments")
+    @Operation(summary = "첨부 목록 조회", description = "특정 활동의 첨부파일 목록을 반환합니다.")
     public ResponseEntity<List<AttachmentResponse>> listAttachments(
-            @Parameter(description = "활동 ID") @PathVariable Long id) {
+            @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId) {
         try {
-            List<AttachmentResponse> attachments = activityService.getAttachments(id).stream()
+            List<AttachmentResponse> attachments = activityService.getAttachments(activityId).stream()
                     .map(ActivityMapper::toAttachmentResponse)
                     .toList();
             return ResponseEntity.ok(attachments);
@@ -149,13 +149,13 @@ public class ActivityController {
         }
     }
 
-    @PostMapping("/{id}/attachments")
-    @Operation(summary = "활동 첨부파일 추가", description = "활동에 첨부파일을 추가합니다.")
+    @PostMapping("/{activityId}/attachments")
+    @Operation(summary = "첨부 추가", description = "활동에 첨부파일을 추가합니다.")
     public ResponseEntity<AttachmentResponse> addAttachment(
-            @Parameter(description = "활동 ID") @PathVariable Long id,
+            @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId,
             @Valid @RequestBody AttachmentUpsertRequest request) {
         try {
-            var attachment = activityService.addAttachment(id, request);
+            var attachment = activityService.addAttachment(activityId, request);
             return ResponseEntity.status(201).body(ActivityMapper.toAttachmentResponse(attachment));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.notFound().build();

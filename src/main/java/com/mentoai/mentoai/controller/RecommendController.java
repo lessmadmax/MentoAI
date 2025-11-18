@@ -1,11 +1,14 @@
 package com.mentoai.mentoai.controller;
 
 import com.mentoai.mentoai.controller.dto.ActivityRecommendationResponse;
+import com.mentoai.mentoai.controller.dto.RecommendRequest;
+import com.mentoai.mentoai.controller.dto.RecommendResponse;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.service.RecommendService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +23,20 @@ import java.util.Map;
 public class RecommendController {
 
     private final RecommendService recommendService;
+
+    @PostMapping
+    @Operation(summary = "RAG 기반 맞춤 추천", description = "사용자 프로필/관심 태그/자연어 질의를 입력받아 활동 추천을 반환합니다.")
+    public ResponseEntity<RecommendResponse> getRecommendations(
+            @Valid @RequestBody RecommendRequest request) {
+        try {
+            RecommendResponse response = recommendService.getRecommendationsByRequest(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
 
     @GetMapping("/activities/{userId}")
     @Operation(summary = "사용자 맞춤 활동 추천", description = "사용자의 관심사와 프로필을 기반으로 활동을 추천합니다.")

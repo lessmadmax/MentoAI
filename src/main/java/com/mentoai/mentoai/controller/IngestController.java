@@ -19,13 +19,30 @@ public class IngestController {
     private final IngestService ingestService;
 
     @PostMapping("/trigger")
-    @Operation(summary = "데이터 수집 트리거", description = "지정된 소스에서 데이터를 수집합니다.")
+    @Operation(summary = "수집 파이프라인 트리거", description = "관리자용. 특정 소스 재수집 또는 전체 동기화를 트리거합니다.")
     public ResponseEntity<Map<String, Object>> triggerIngest(
-            @Parameter(description = "수집 소스 (campus, external, manual)") @RequestParam String source,
-            @RequestBody(required = false) Map<String, Object> config) {
+            @RequestBody(required = false) Map<String, Object> requestBody) {
         try {
-            Map<String, Object> result = ingestService.triggerIngest(source, config != null ? config : Map.of());
-            return ResponseEntity.ok(result);
+            String source = null;
+            Boolean fullResync = false;
+            
+            if (requestBody != null) {
+                source = (String) requestBody.get("source");
+                Object fullResyncObj = requestBody.get("fullResync");
+                if (fullResyncObj instanceof Boolean) {
+                    fullResync = (Boolean) fullResyncObj;
+                } else if (fullResyncObj != null) {
+                    fullResync = Boolean.parseBoolean(fullResyncObj.toString());
+                }
+            }
+            
+            Map<String, Object> config = Map.of(
+                "source", source != null ? source : "",
+                "fullResync", fullResync
+            );
+            
+            Map<String, Object> result = ingestService.triggerIngest(source, config);
+            return ResponseEntity.status(202).body(result);  // 202 Accepted (스펙에 맞춤)
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", "데이터 수집 실패",

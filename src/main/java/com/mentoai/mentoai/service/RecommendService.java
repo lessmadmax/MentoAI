@@ -2,7 +2,10 @@ package com.mentoai.mentoai.service;
 
 import com.mentoai.mentoai.controller.dto.ActivityRecommendationResponse;
 import com.mentoai.mentoai.controller.dto.ActivityResponse;
+import com.mentoai.mentoai.controller.dto.RecommendRequest;
+import com.mentoai.mentoai.controller.dto.RecommendResponse;
 import com.mentoai.mentoai.controller.dto.RoleFitRequest;
+import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
@@ -34,6 +37,9 @@ public class RecommendService {
     private final GeminiService geminiService;
     private final RoleFitService roleFitService;
     private final TagRepository tagRepository;
+    private final UserProfileService userProfileService;
+    private final UserInterestService userInterestService;
+    private final TargetRoleService targetRoleService;
     
     // 사용자 맞춤 활동 추천
     public List<ActivityEntity> getRecommendations(Long userId, Integer limit, String type, Boolean campusOnly) {
@@ -536,5 +542,325 @@ public class RecommendService {
             log.debug("Failed to calculate expected score increase: {}", e.getMessage());
             return null;
         }
+    }
+    
+    /**
+     * RAG 기반 맞춤 추천 (사용자 프롬프트 기반)
+     */
+    public RecommendResponse getRecommendationsByRequest(RecommendRequest request) {
+        if (request.userId() == null) {
+            throw new IllegalArgumentException("userId는 필수입니다.");
+        }
+        
+        if (!userRepository.existsById(request.userId())) {
+            throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + request.userId());
+        }
+        
+        // 1. 사용자 프로필 및 관심사 수집
+        UserProfileResponse userProfile = userProfileService.getProfile(request.userId());
+        List<UserInterestEntity> userInterests = userInterestService.getUserInterests(request.userId());
+        
+        // 2. 관련 활동 검색 (Retrieval)
+        List<ActivityEntity> candidateActivities = retrieveRelevantActivities(
+                request, userProfile, userInterests, request.getTopKOrDefault() * 2
+        );
+        
+        if (candidateActivities.isEmpty()) {
+            return new RecommendResponse(List.of());
+        }
+        
+        // 3. Gemini에 RAG 프롬프트 구성 및 전송
+        String prompt = buildRAGPrompt(request, userProfile, userInterests, candidateActivities);
+        String geminiResponse;
+        try {
+            geminiResponse = geminiService.generateText(prompt);
+        } catch (Exception e) {
+            log.error("Failed to generate recommendation from Gemini API", e);
+            // Fallback: 점수 기반 추천
+            return fallbackToScoreBasedRecommendation(request, candidateActivities);
+        }
+        
+        // 4. Gemini 응답 파싱하여 구조화된 결과 반환
+        List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
+                geminiResponse, candidateActivities, request.getTopKOrDefault()
+        );
+        
+        return new RecommendResponse(items);
+    }
+    
+    /**
+     * 관련 활동 검색 (Retrieval)
+     */
+    private List<ActivityEntity> retrieveRelevantActivities(
+            RecommendRequest request,
+            UserProfileResponse userProfile,
+            List<UserInterestEntity> userInterests,
+            int limit) {
+        
+        List<ActivityEntity> activities = new ArrayList<>();
+        
+        // query가 있으면 의미 기반 검색
+        if (request.query() != null && !request.query().trim().isEmpty()) {
+            List<SemanticSearchResult> searchResults = semanticSearchWithScores(
+                    request.query(),
+                    limit,
+                    request.userId().toString()
+            );
+            activities.addAll(searchResults.stream()
+                    .map(SemanticSearchResult::activity)
+                    .toList());
+        }
+        
+        // preferTags가 있으면 태그 기반 검색
+        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
+            Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
+            // 태그 이름으로 활동 검색 (간단한 구현)
+            for (String tagName : request.preferTags()) {
+                List<ActivityEntity> tagActivities = activityRepository.findByFilters(
+                        tagName,
+                        null,
+                        null,
+                        null,
+                        pageable
+                ).getContent();
+                activities.addAll(tagActivities);
+            }
+        }
+        
+        // 사용자 관심사 기반 검색
+        if (!userInterests.isEmpty() && request.getUseProfileHintsOrDefault()) {
+            Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
+            List<ActivityEntity> interestActivities = getRecommendations(
+                    request.userId(),
+                    limit,
+                    null,
+                    null
+            );
+            activities.addAll(interestActivities);
+        }
+        
+        // 중복 제거 및 정렬
+        return activities.stream()
+                .distinct()
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * RAG 프롬프트 구성
+     */
+    private String buildRAGPrompt(
+            RecommendRequest request,
+            UserProfileResponse userProfile,
+            List<UserInterestEntity> userInterests,
+            List<ActivityEntity> activities) {
+        
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("당신은 대학생 진로 상담 전문가입니다. 사용자의 프로필과 질의를 바탕으로 활동을 추천해주세요.\n\n");
+        
+        // 사용자 프로필 정보
+        prompt.append("=== 사용자 프로필 ===\n");
+        
+        if (userProfile.university() != null) {
+            prompt.append(String.format("대학: %s, 학년: %d학년, 전공: %s\n",
+                    userProfile.university().universityName() != null ? userProfile.university().universityName() : "미입력",
+                    userProfile.university().grade() != null ? userProfile.university().grade() : 0,
+                    userProfile.university().major() != null ? userProfile.university().major() : "미입력"));
+        }
+        
+        // 관심 분야
+        if (userProfile.interestDomains() != null && !userProfile.interestDomains().isEmpty()) {
+            prompt.append("관심 분야: ").append(String.join(", ", userProfile.interestDomains())).append("\n");
+        }
+        
+        // 관심 태그
+        if (!userInterests.isEmpty()) {
+            List<String> interestTags = userInterests.stream()
+                    .map(interest -> tagRepository.findById(interest.getTagId())
+                            .map(tag -> tag.getName())
+                            .orElse(""))
+                    .filter(name -> !name.isEmpty())
+                    .toList();
+            if (!interestTags.isEmpty()) {
+                prompt.append("관심 태그: ").append(String.join(", ", interestTags)).append("\n");
+            }
+        }
+        
+        // 기술 스택
+        if (userProfile.techStack() != null && !userProfile.techStack().isEmpty()) {
+            List<String> skills = userProfile.techStack().stream()
+                    .map(skill -> skill.name() + (skill.level() != null ? " (" + skill.level() + ")" : ""))
+                    .toList();
+            prompt.append("기술 스택: ").append(String.join(", ", skills)).append("\n");
+        }
+        
+        // 경험
+        if (userProfile.experiences() != null && !userProfile.experiences().isEmpty()) {
+            prompt.append("주요 경험:\n");
+            for (UserProfileResponse.Experience exp : userProfile.experiences()) {
+                prompt.append(String.format("- %s: %s (%s)\n",
+                        exp.type(), exp.title(), exp.organization()));
+            }
+        }
+        
+        // 자연어 질의
+        prompt.append("\n=== 사용자 질의 ===\n");
+        prompt.append(request.query() != null ? request.query() : "활동 추천을 요청합니다.").append("\n");
+        
+        // 선호 태그
+        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
+            prompt.append("선호 태그: ").append(String.join(", ", request.preferTags())).append("\n");
+        }
+        
+        // 후보 활동 목록
+        prompt.append("\n=== 후보 활동 목록 ===\n");
+        for (int i = 0; i < Math.min(activities.size(), 20); i++) {
+            ActivityEntity activity = activities.get(i);
+            prompt.append(String.format("[%d] %s\n", i + 1, activity.getTitle()));
+            if (activity.getSummary() != null) {
+                prompt.append("   요약: ").append(activity.getSummary()).append("\n");
+            }
+            if (activity.getActivityTags() != null && !activity.getActivityTags().isEmpty()) {
+                List<String> tagNames = activity.getActivityTags().stream()
+                        .map(at -> at.getTag().getName())
+                        .toList();
+                prompt.append("   태그: ").append(String.join(", ", tagNames)).append("\n");
+            }
+            prompt.append("\n");
+        }
+        
+        // 추천 요청
+        prompt.append("\n=== 요청사항 ===\n");
+        prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
+        prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
+        prompt.append("JSON 형식으로 반환해주세요:\n");
+        prompt.append("{\n");
+        prompt.append("  \"items\": [\n");
+        prompt.append("    {\n");
+        prompt.append("      \"activityIndex\": 1,\n");
+        prompt.append("      \"score\": 85.5,\n");
+        prompt.append("      \"reason\": \"이 공모전은 백엔드 개발 경험을 쌓기에 적합합니다. 사용자의 Spring Boot 경험과 연계하여 실무 역량을 향상시킬 수 있습니다.\"\n");
+        prompt.append("    }\n");
+        prompt.append("  ]\n");
+        prompt.append("}\n");
+        prompt.append("activityIndex는 위 후보 활동 목록의 번호(1부터 시작)입니다.\n");
+        prompt.append("score는 0-100 사이의 추천 점수입니다.\n");
+        prompt.append("reason은 사용자가 이해하기 쉬운 자연어로 작성해주세요.");
+        
+        return prompt.toString();
+    }
+    
+    /**
+     * Gemini 응답 파싱
+     */
+    private List<RecommendResponse.RecommendItem> parseGeminiRecommendationResponse(
+            String geminiResponse,
+            List<ActivityEntity> candidateActivities,
+            int topK) {
+        
+        List<RecommendResponse.RecommendItem> items = new ArrayList<>();
+        
+        try {
+            // JSON 파싱 시도
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(geminiResponse);
+            
+            com.fasterxml.jackson.databind.JsonNode itemsNode = jsonNode.path("items");
+            if (itemsNode.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode itemNode : itemsNode) {
+                    int activityIndex = itemNode.path("activityIndex").asInt() - 1; // 1-based to 0-based
+                    double score = itemNode.path("score").asDouble();
+                    String reason = itemNode.path("reason").asText();
+                    
+                    if (activityIndex >= 0 && activityIndex < candidateActivities.size()) {
+                        ActivityEntity activity = candidateActivities.get(activityIndex);
+                        ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+                        items.add(new RecommendResponse.RecommendItem(
+                                activityResponse,
+                                score,
+                                reason
+                        ));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse Gemini JSON response, trying text parsing", e);
+            // JSON 파싱 실패 시 텍스트 기반 파싱 시도
+            items = parseGeminiTextResponse(geminiResponse, candidateActivities, topK);
+        }
+        
+        // 최대 topK개로 제한
+        return items.stream()
+                .limit(topK)
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * Gemini 텍스트 응답 파싱 (Fallback)
+     */
+    private List<RecommendResponse.RecommendItem> parseGeminiTextResponse(
+            String geminiResponse,
+            List<ActivityEntity> candidateActivities,
+            int topK) {
+        
+        List<RecommendResponse.RecommendItem> items = new ArrayList<>();
+        
+        // 간단한 텍스트 파싱 (활동 제목 매칭)
+        for (ActivityEntity activity : candidateActivities.stream().limit(topK).toList()) {
+            if (geminiResponse.contains(activity.getTitle())) {
+                ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+                items.add(new RecommendResponse.RecommendItem(
+                        activityResponse,
+                        75.0, // 기본 점수
+                        "사용자의 프로필과 질의를 기반으로 추천되었습니다."
+                ));
+            }
+        }
+        
+        return items;
+    }
+    
+    /**
+     * Fallback: 점수 기반 추천
+     */
+    private RecommendResponse fallbackToScoreBasedRecommendation(
+            RecommendRequest request,
+            List<ActivityEntity> candidateActivities) {
+        
+        // preferTags에서 targetRole 추출 시도
+        String targetRole = null;
+        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
+            targetRole = request.preferTags().get(0);
+        }
+        
+        List<ActivityRecommendationResponse> scored = getRecommendationsWithScores(
+                request.userId(),
+                request.getTopKOrDefault(),
+                null,
+                null,
+                targetRole
+        );
+        
+        List<RecommendResponse.RecommendItem> items = scored.stream()
+                .map(rec -> new RecommendResponse.RecommendItem(
+                        rec.activity(),
+                        rec.recommendationScore(),
+                        generateSimpleReason(rec)
+                ))
+                .collect(Collectors.toList());
+        
+        return new RecommendResponse(items);
+    }
+    
+    /**
+     * 간단한 추천 이유 생성
+     */
+    private String generateSimpleReason(ActivityRecommendationResponse rec) {
+        StringBuilder reason = new StringBuilder();
+        if (rec.roleFitScore() != null) {
+            reason.append(String.format("직무 적합도: %.1f점. ", rec.roleFitScore()));
+        }
+        reason.append("사용자의 관심사와 프로필을 기반으로 추천되었습니다.");
+        return reason.toString();
     }
 }
