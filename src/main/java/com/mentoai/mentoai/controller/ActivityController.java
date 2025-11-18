@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,6 +31,7 @@ public class ActivityController {
     private final ActivityService activityService;
 
     @GetMapping
+    @Transactional(readOnly = true)
     @Operation(summary = "활동 목록 조회", description = "필터/정렬을 포함한 활동 목록을 반환합니다.")
     public ResponseEntity<PagedActivitiesResponse> listActivities(
             @Parameter(description = "제목/내용 전체 검색어") @RequestParam(required = false) String q,

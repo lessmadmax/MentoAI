@@ -44,10 +44,18 @@ public class ActivityService {
             String sort,
             String direction) {
 
-        Sort.Order sortOrder = new Sort.Order(
-                Sort.Direction.fromOptionalString(direction).orElse(Sort.Direction.DESC),
-                sort);
-        Pageable pageable = PageRequest.of(page, size, Sort.by(sortOrder));
+        Sort.Direction sortDirection;
+        try {
+            if (direction == null || direction.isBlank()) {
+                sortDirection = Sort.Direction.DESC;
+            } else {
+                sortDirection = Sort.Direction.fromString(direction.toUpperCase());
+            }
+        } catch (IllegalArgumentException e) {
+            sortDirection = Sort.Direction.DESC;
+        }
+        Sort sortObj = Sort.by(sortDirection, sort);
+        Pageable pageable = PageRequest.of(page, size, sortObj);
 
         LocalDateTime deadlineDateTime = null;
         if (deadlineBefore != null) {
