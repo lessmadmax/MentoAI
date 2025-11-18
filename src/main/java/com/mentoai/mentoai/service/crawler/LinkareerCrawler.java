@@ -1,11 +1,11 @@
-package com.mentoai.mentoai.service;
+package com.mentoai.mentoai.service.crawler;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -16,45 +16,42 @@ import java.util.List;
 import java.util.Map;
 
 @Slf4j
-@Service
+@Component
 @RequiredArgsConstructor
-public class LinkareerCrawlerService {
+public class LinkareerCrawler implements ExternalActivityCrawler {
 
     private final ObjectMapper objectMapper;
 
-    @Value("${linkareer.crawler.path:../Mentoai-DE}")
+    @Value("${external.crawler.linkareer.path:../Mentoai-DE}")
     private String crawlerPath;
 
-    @Value("${linkareer.crawler.python.path:python3}")
+    @Value("${external.crawler.python.path:python3}")
     private String pythonPath;
 
-    /**
-     * Linkareer 전체 공모전 크롤링
-     * @return 크롤링된 활동 목록
-     */
-    public List<LinkareerActivity> crawlAllContests() {
+    @Override
+    public String getSourceName() {
+        return "linkareer";
+    }
+
+    @Override
+    public List<ExternalActivity> crawlAll() {
         return executeCrawlerScript("total_linkareer.py");
     }
 
-    /**
-     * Linkareer 최신 공모전 일부 크롤링 (30개)
-     * @return 크롤링된 활동 목록
-     */
-    public List<LinkareerActivity> crawlRecentContests() {
+    @Override
+    public List<ExternalActivity> crawlRecent() {
         return executeCrawlerScript("partial_linkareer.py");
     }
 
     /**
      * Python 크롤러 스크립트 실행
-     * @param scriptName 실행할 스크립트 파일명
-     * @return 크롤링된 활동 목록
      */
-    private List<LinkareerActivity> executeCrawlerScript(String scriptName) {
-        List<LinkareerActivity> activities = new ArrayList<>();
+    private List<ExternalActivity> executeCrawlerScript(String scriptName) {
+        List<ExternalActivity> activities = new ArrayList<>();
         
         try {
             Path scriptPath = Paths.get(crawlerPath, scriptName);
-            log.info("Executing crawler script: {}", scriptPath);
+            log.info("Executing Linkareer crawler script: {}", scriptPath);
             
             // Python 스크립트 실행
             ProcessBuilder processBuilder = new ProcessBuilder(
@@ -80,7 +77,7 @@ public class LinkareerCrawlerService {
             int exitCode = process.waitFor();
             
             if (exitCode != 0) {
-                log.error("Crawler script failed with exit code: {}", exitCode);
+                log.error("Linkareer crawler script failed with exit code: {}", exitCode);
                 log.error("Output: {}", output.toString());
                 return activities;
             }
@@ -88,7 +85,7 @@ public class LinkareerCrawlerService {
             // JSON 파싱
             String jsonOutput = output.toString().trim();
             if (jsonOutput.isEmpty()) {
-                log.warn("Crawler script returned empty output");
+                log.warn("Linkareer crawler script returned empty output");
                 return activities;
             }
             
@@ -98,31 +95,31 @@ public class LinkareerCrawlerService {
                     new TypeReference<List<Map<String, Object>>>() {}
             );
             
-            // LinkareerActivity로 변환
+            // ExternalActivity로 변환
             for (Map<String, Object> raw : rawActivities) {
                 try {
-                    LinkareerActivity activity = parseLinkareerActivity(raw);
+                    ExternalActivity activity = parseExternalActivity(raw);
                     if (activity != null) {
                         activities.add(activity);
                     }
                 } catch (Exception e) {
-                    log.warn("Failed to parse activity: {}", raw, e);
+                    log.warn("Failed to parse Linkareer activity: {}", raw, e);
                 }
             }
             
-            log.info("Successfully crawled {} activities from {}", activities.size(), scriptName);
+            log.info("Successfully crawled {} activities from Linkareer ({})", activities.size(), scriptName);
             
         } catch (Exception e) {
-            log.error("Error executing crawler script: {}", scriptName, e);
+            log.error("Error executing Linkareer crawler script: {}", scriptName, e);
         }
         
         return activities;
     }
 
     /**
-     * 원시 데이터를 LinkareerActivity로 파싱
+     * 원시 데이터를 ExternalActivity로 파싱
      */
-    private LinkareerActivity parseLinkareerActivity(Map<String, Object> raw) {
+    private ExternalActivity parseExternalActivity(Map<String, Object> raw) {
         try {
             String title = getStringValue(raw, "title");
             String id = getStringValue(raw, "id");
@@ -134,15 +131,22 @@ public class LinkareerCrawlerService {
                 return null;
             }
             
-            return new LinkareerActivity(
+            // URL 생성
+            String url = id != null 
+                    ? "https://linkareer.com/activity/" + id 
+                    : null;
+            
+            return new ExternalActivity(
+                    getSourceName(),
                     title,
                     id,
                     recruitCloseAt,
                     organizationName,
-                    field
+                    field,
+                    url
             );
         } catch (Exception e) {
-            log.warn("Failed to parse LinkareerActivity from raw data: {}", raw, e);
+            log.warn("Failed to parse ExternalActivity from raw data: {}", raw, e);
             return null;
         }
     }
@@ -178,16 +182,6 @@ public class LinkareerCrawlerService {
             return null;
         }
     }
-
-    /**
-     * Linkareer 활동 데이터 DTO
-     */
-    public record LinkareerActivity(
-            String title,
-            String id,  // Linkareer 활동 ID
-            Long recruitCloseAt,  // 밀리초 타임스탬프
-            String organizationName,
-            String field  // 분야
-    ) {}
 }
+
 

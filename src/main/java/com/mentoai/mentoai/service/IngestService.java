@@ -7,7 +7,7 @@ import com.mentoai.mentoai.entity.ActivityTagId;
 import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.TagRepository;
-import com.mentoai.mentoai.service.LinkareerCrawlerService.LinkareerActivity;
+import com.mentoai.mentoai.service.crawler.ExternalActivity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,7 +30,7 @@ public class IngestService {
     
     private final ActivityRepository activityRepository;
     private final TagRepository tagRepository;
-    private final LinkareerCrawlerService linkareerCrawlerService;
+    private final ExternalCrawlerService externalCrawlerService;
     private final ExecutorService executorService = Executors.newFixedThreadPool(5);
     
     // 데이터 수집 트리거
@@ -63,13 +63,18 @@ public class IngestService {
                     ingestCampusActivities(config);
                     break;
                 case "external":
-                    ingestExternalActivities(config);
+                case "linkareer":
+                    // 외부 크롤러를 사용하는 경우 public 메서드 호출
+                    if (config != null && config.containsKey("source")) {
+                        // 외부 크롤러 사용
+                        ingestExternalActivities(config);
+                    } else {
+                        // 샘플 데이터 사용 (deprecated)
+                        ingestExternalActivitiesSample(config);
+                    }
                     break;
                 case "manual":
                     ingestManualActivities(config);
-                    break;
-                case "linkareer":
-                    ingestLinkareerContests(config);
                     break;
                 default:
                     log.warn("Unknown ingestion source: {}", source);
@@ -105,8 +110,8 @@ public class IngestService {
         log.info("Campus activities ingestion finished: {} created", created);
     }
     
-    // 외부 활동 수집
-    private void ingestExternalActivities(Map<String, Object> config) {
+    // 외부 활동 수집 (샘플 데이터용 - deprecated)
+    private void ingestExternalActivitiesSample(Map<String, Object> config) {
         log.info("External activities ingestion started");
         
         // 실제로는 외부 사이트들을 크롤링
@@ -237,74 +242,76 @@ public class IngestService {
         return activities;
     }
     
-    // Linkareer 공모전 수집
+    // 외부 사이트 활동 수집 (Linkareer 등)
     @Transactional
-    public Map<String, Object> ingestLinkareerContests(Map<String, Object> config) {
-        log.info("Linkareer contests ingestion started");
-        
+    public Map<String, Object> ingestExternalActivities(Map<String, Object> config) {
+        String source = config != null ? (String) config.get("source") : "linkareer";
         String mode = config != null ? (String) config.get("mode") : "partial";
-        List<LinkareerActivity> linkareerActivities;
+        
+        log.info("External activities ingestion started: source={}, mode={}", source, mode);
+        
+        List<ExternalActivity> externalActivities;
         
         if ("total".equalsIgnoreCase(mode)) {
-            linkareerActivities = linkareerCrawlerService.crawlAllContests();
+            externalActivities = externalCrawlerService.crawlAll(source);
         } else {
-            linkareerActivities = linkareerCrawlerService.crawlRecentContests();
+            externalActivities = externalCrawlerService.crawlRecent(source);
         }
         
         int created = 0;
         int skipped = 0;
         
-        for (LinkareerActivity linkareerActivity : linkareerActivities) {
+        for (ExternalActivity externalActivity : externalActivities) {
             try {
                 // 중복 체크 (URL 기반)
-                String url = linkareerActivity.id() != null 
-                        ? "https://linkareer.com/activity/" + linkareerActivity.id()
-                        : null;
+                String url = externalActivity.getUrlOrDefault();
                 
                 if (url != null && activityRepository.existsByUrl(url)) {
                     skipped++;
-                    log.debug("Skipped duplicate activity: {}", linkareerActivity.title());
+                    log.debug("Skipped duplicate activity: {}", externalActivity.title());
                     continue;
                 }
                 
-                ActivityEntity activity = convertLinkareerToActivity(linkareerActivity);
+                ActivityEntity activity = convertExternalActivityToEntity(externalActivity);
                 activityRepository.save(activity);
                 created++;
                 
-                log.debug("Created Linkareer activity: {}", activity.getTitle());
+                log.debug("Created external activity from {}: {}", source, activity.getTitle());
             } catch (Exception e) {
-                log.error("Failed to create Linkareer activity: {}", linkareerActivity.title(), e);
+                log.error("Failed to create external activity from {}: {}", source, externalActivity.title(), e);
             }
         }
         
-        log.info("Linkareer contests ingestion finished: {} created, {} skipped", created, skipped);
+        log.info("External activities ingestion finished: source={}, {} created, {} skipped", source, created, skipped);
         
         Map<String, Object> result = new HashMap<>();
+        result.put("source", source);
         result.put("created", created);
         result.put("skipped", skipped);
-        result.put("total", linkareerActivities.size());
+        result.put("total", externalActivities.size());
         return result;
     }
     
-    // LinkareerActivity를 ActivityEntity로 변환
-    private ActivityEntity convertLinkareerToActivity(LinkareerActivity linkareer) {
+    // ExternalActivity를 ActivityEntity로 변환
+    private ActivityEntity convertExternalActivityToEntity(ExternalActivity external) {
         ActivityEntity activity = new ActivityEntity();
         
-        activity.setTitle(linkareer.title());
-        activity.setOrganizer(linkareer.organizationName());
+        activity.setTitle(external.title());
+        activity.setOrganizer(external.organizationName());
         activity.setType(ActivityEntity.ActivityType.CONTEST);
         activity.setStatus(ActivityEntity.ActivityStatus.OPEN);
         activity.setIsCampus(false);
         
-        // URL 생성
-        if (linkareer.id() != null) {
-            activity.setUrl("https://linkareer.com/activity/" + linkareer.id());
+        // URL 설정
+        String url = external.getUrlOrDefault();
+        if (url != null) {
+            activity.setUrl(url);
         }
         
         // 마감일 설정
-        if (linkareer.recruitCloseAt() != null) {
+        if (external.recruitCloseAt() != null) {
             LocalDateTime closeDate = LocalDateTime.ofInstant(
-                    Instant.ofEpochMilli(linkareer.recruitCloseAt()),
+                    Instant.ofEpochMilli(external.recruitCloseAt()),
                     ZoneId.systemDefault()
             );
             
@@ -320,8 +327,8 @@ public class IngestService {
         }
         
         // 태그 생성 또는 찾기
-        if (StringUtils.hasText(linkareer.field())) {
-            TagEntity tag = findOrCreateTag(linkareer.field(), TagEntity.TagType.CATEGORY);
+        if (StringUtils.hasText(external.field())) {
+            TagEntity tag = findOrCreateTag(external.field(), TagEntity.TagType.CATEGORY);
             if (tag != null) {
                 ActivityTagEntity activityTag = new ActivityTagEntity();
                 activityTag.setActivity(activity);

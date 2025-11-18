@@ -21,7 +21,7 @@ public class IngestController {
     @PostMapping("/trigger")
     @Operation(summary = "데이터 수집 트리거", description = "지정된 소스에서 데이터를 수집합니다.")
     public ResponseEntity<Map<String, Object>> triggerIngest(
-            @Parameter(description = "수집 소스 (campus, external, manual, linkareer)") @RequestParam String source,
+            @Parameter(description = "수집 소스 (campus, external, manual)") @RequestParam String source,
             @RequestBody(required = false) Map<String, Object> config) {
         try {
             Map<String, Object> result = ingestService.triggerIngest(source, config != null ? config : Map.of());
@@ -63,10 +63,13 @@ public class IngestController {
     }
 
     @PostMapping("/external")
-    @Operation(summary = "외부 활동 수집", description = "외부 활동 데이터를 수집합니다.")
-    public ResponseEntity<Map<String, Object>> ingestExternalActivities() {
+    @Operation(summary = "외부 활동 수집", description = "외부 사이트에서 활동 데이터를 크롤링합니다.")
+    public ResponseEntity<Map<String, Object>> ingestExternalActivities(
+            @Parameter(description = "크롤러 소스 (linkareer 등)") @RequestParam(defaultValue = "linkareer") String source,
+            @Parameter(description = "수집 모드 (total: 전체, partial: 최신 일부)") @RequestParam(defaultValue = "partial") String mode) {
         try {
-            Map<String, Object> result = ingestService.triggerIngest("external", Map.of());
+            Map<String, Object> config = Map.of("source", source, "mode", mode);
+            Map<String, Object> result = ingestService.ingestExternalActivities(config);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -93,12 +96,12 @@ public class IngestController {
     }
 
     @PostMapping("/linkareer")
-    @Operation(summary = "Linkareer 공모전 수집", description = "Linkareer에서 공모전 데이터를 크롤링합니다.")
+    @Operation(summary = "Linkareer 공모전 수집 (Deprecated)", description = "Linkareer에서 공모전 데이터를 크롤링합니다. /external?source=linkareer 사용을 권장합니다.")
     public ResponseEntity<Map<String, Object>> ingestLinkareerContests(
             @Parameter(description = "수집 모드 (total: 전체, partial: 최신 일부)") @RequestParam(defaultValue = "partial") String mode) {
         try {
-            Map<String, Object> config = Map.of("mode", mode);
-            Map<String, Object> result = ingestService.ingestLinkareerContests(config);
+            Map<String, Object> config = Map.of("source", "linkareer", "mode", mode);
+            Map<String, Object> result = ingestService.ingestExternalActivities(config);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of(

@@ -574,27 +574,27 @@ public class RoleFitService {
     
     private String extractRoleKeyword(String input) {
         // 직무 키워드 매핑
-        Map<String, String> roleKeywords = Map.of(
-                "백엔드", "backend",
-                "backend", "backend",
-                "프론트엔드", "frontend",
-                "frontend", "frontend",
-                "풀스택", "fullstack",
-                "fullstack", "fullstack",
-                "데이터", "data",
-                "data", "data",
-                "ai", "ai",
-                "머신러닝", "ai",
-                "ml", "ai",
-                "devops", "devops",
-                "시스템", "system",
-                "system", "system",
-                "보안", "security",
-                "security", "security",
-                "모바일", "mobile",
-                "mobile", "mobile",
-                "ios", "ios",
-                "android", "android"
+        Map<String, String> roleKeywords = Map.ofEntries(
+                Map.entry("백엔드", "backend"),
+                Map.entry("backend", "backend"),
+                Map.entry("프론트엔드", "frontend"),
+                Map.entry("frontend", "frontend"),
+                Map.entry("풀스택", "fullstack"),
+                Map.entry("fullstack", "fullstack"),
+                Map.entry("데이터", "data"),
+                Map.entry("data", "data"),
+                Map.entry("ai", "ai"),
+                Map.entry("머신러닝", "ai"),
+                Map.entry("ml", "ai"),
+                Map.entry("devops", "devops"),
+                Map.entry("시스템", "system"),
+                Map.entry("system", "system"),
+                Map.entry("보안", "security"),
+                Map.entry("security", "security"),
+                Map.entry("모바일", "mobile"),
+                Map.entry("mobile", "mobile"),
+                Map.entry("ios", "ios"),
+                Map.entry("android", "android")
         );
         
         String lowerInput = input.toLowerCase(Locale.ROOT);
