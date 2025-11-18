@@ -565,8 +565,20 @@ public class RecommendService {
                 request, userProfile, userInterests, request.getTopKOrDefault() * 2
         );
         
+        // 추가 fallback: 여전히 비어있으면 일반 활동 목록으로 fallback
         if (candidateActivities.isEmpty()) {
-            return new RecommendResponse(List.of());
+            log.warn("No candidate activities found after retrieval, falling back to general activities");
+            Pageable pageable = PageRequest.of(0, request.getTopKOrDefault() * 2, 
+                    Sort.by(Sort.Direction.DESC, "createdAt"));
+            candidateActivities = activityRepository.findByFilters(
+                    null, null, null, null, pageable
+            ).getContent();
+            
+            // 여전히 비어있으면 빈 응답 반환 (데이터베이스에 활동이 없음)
+            if (candidateActivities.isEmpty()) {
+                log.warn("No activities found in database");
+                return new RecommendResponse(List.of());
+            }
         }
         
         // 3. Gemini에 RAG 프롬프트 구성 및 전송
@@ -640,10 +652,21 @@ public class RecommendService {
         }
         
         // 중복 제거 및 정렬
-        return activities.stream()
+        activities = activities.stream()
                 .distinct()
                 .limit(limit)
                 .collect(Collectors.toList());
+        
+        // 결과가 없으면 일반 활동 목록으로 fallback
+        if (activities.isEmpty()) {
+            log.warn("No relevant activities found, falling back to general activities");
+            Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
+            activities = activityRepository.findByFilters(
+                    null, null, null, null, pageable
+            ).getContent();
+        }
+        
+        return activities;
     }
     
     /**
