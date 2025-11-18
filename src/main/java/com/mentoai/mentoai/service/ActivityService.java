@@ -57,10 +57,10 @@ public class ActivityService {
         Sort sortObj = Sort.by(sortDirection, sort);
         Pageable pageable = PageRequest.of(page, size, sortObj);
 
-        // PostgreSQL 타입 추론 문제를 피하기 위해 null 대신 MAX 값을 사용
+        // deadlineBefore가 null이면 null을 전달하고, 쿼리에서 IS NULL 체크로 처리
         LocalDateTime deadlineDateTime = deadlineBefore != null 
                 ? deadlineBefore.atTime(LocalTime.MAX)
-                : LocalDateTime.MAX;
+                : null;
 
         return activityRepository.search(
                 query,
