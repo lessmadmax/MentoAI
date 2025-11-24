@@ -21,9 +21,8 @@ public class MetaDataService {
 
     // ==== [1] 설정 파일(application-local.properties)에서 키 가져오기 ====
     
-    // 학교(커리어넷)는 승인 대기 중이라 키 사용 안 함
-    // @Value("${api.careernet.key}")
-    // private String careerNetKey; 
+    @Value("${api.careernet.key}")
+    private String careerNetKey; 
 
     @Value("${api.worknet.major.key}")
     private String worknetMajorKey;     // 학과 정보 키
@@ -173,8 +172,29 @@ public class MetaDataService {
     public List<String> getSchools(String query) {
         if (query == null || query.isBlank()) return List.of();
         
-        return List.of("경희대학교", "서울대학교", "연세대학교", "고려대학교", "성균관대학교", "한양대학교", "서강대학교").stream()
-                .filter(s -> s.contains(query))
-                .toList();
+        List<String> resultList = new ArrayList<>();
+        try {
+            // [수정] 커리어넷 API 호출
+            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi"
+                       + "?apiKey=" + careerNetKey
+                       + "&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list"
+                       + "&searchSchulNm=" + query; // 검색어 파라미터
+
+            String responseBody = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(responseBody);
+
+            // 커리어넷 JSON 파싱: dataSearch -> content -> schoolName
+            JsonNode contentNode = root.path("dataSearch").path("content");
+            if (contentNode.isArray()) {
+                for (JsonNode item : contentNode) {
+                    resultList.add(item.path("schoolName").asText());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("❌ 학교 API 호출 실패: " + e.getMessage());
+            // 실패 시 빈 리스트 반환 (사용자는 검색 결과 없음으로 인지)
+            return List.of(); 
+        }
+        return resultList;
     }
 }
