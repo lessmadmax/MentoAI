@@ -37,6 +37,7 @@ public class RecommendService {
     private final RoleFitService roleFitService;
     private final UserProfileService userProfileService;
     private final ActivityRoleMatchService activityRoleMatchService;
+    private final RecommendChatLogService recommendChatLogService;
     
     // 사용자 맞춤 활동 추천 (targetRole 기반)
     public List<ActivityEntity> getRecommendations(Long userId, Integer limit, String type, Boolean campusOnly) {
@@ -449,21 +450,37 @@ public class RecommendService {
         
         // 3. Gemini에 RAG 프롬프트 구성 및 전송
         String prompt = buildRAGPrompt(request, userProfile, candidateActivities);
+        var chatLog = recommendChatLogService.createLog(
+                request.userId(),
+                userProfile.targetRoleId(),
+                request,
+                candidateActivities,
+                prompt
+        );
+
         String geminiResponse;
+        RecommendResponse finalResponse;
         try {
             geminiResponse = geminiService.generateText(prompt);
+            // 4. Gemini 응답 파싱하여 구조화된 결과 반환
+            List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
+                    geminiResponse, candidateActivities, request.getTopKOrDefault()
+            );
+            finalResponse = new RecommendResponse(items);
         } catch (Exception e) {
             log.error("Failed to generate recommendation from Gemini API", e);
-            // Fallback: 점수 기반 추천
-            return fallbackToScoreBasedRecommendation(request, candidateActivities);
+            finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities);
+            geminiResponse = "FALLBACK_USED: " + e.getMessage();
         }
-        
-        // 4. Gemini 응답 파싱하여 구조화된 결과 반환
-        List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
-                geminiResponse, candidateActivities, request.getTopKOrDefault()
+
+        recommendChatLogService.completeLog(
+                chatLog.getId(),
+                geminiResponse,
+                finalResponse,
+                "gemini-pro"
         );
-        
-        return new RecommendResponse(items);
+
+        return finalResponse;
     }
     
     /**
