@@ -78,6 +78,10 @@ public class ActivityEntity {
     @OneToMany(mappedBy = "activity", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<AttachmentEntity> attachments;
 
+    @JsonIgnore
+    @OneToMany(mappedBy = "activity", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<ActivityTargetRoleEntity> targetRoleMatches;
+
     public enum ActivityType {
         JOB, CONTEST, STUDY, CAMPUS
     }
