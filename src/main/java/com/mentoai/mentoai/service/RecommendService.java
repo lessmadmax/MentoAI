@@ -31,7 +31,6 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class RecommendService {
     
     private final ActivityRepository activityRepository;
@@ -46,6 +45,7 @@ public class RecommendService {
     private boolean vectorSearchEnabled;
     
     // 사용자 맞춤 활동 추천 (targetRole 기반)
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getRecommendations(Long userId, Integer limit, String type, Boolean campusOnly) {
         if (!userRepository.existsById(userId)) {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId);
@@ -92,6 +92,7 @@ public class RecommendService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
     public List<SemanticSearchResult> semanticSearchWithScores(String query, Integer limit, String userId) {
         if (query == null || query.trim().isEmpty()) {
             throw new IllegalArgumentException("검색어는 필수입니다.");
@@ -275,6 +276,7 @@ public class RecommendService {
     }
     
     // 인기 활동 조회
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getTrendingActivities(Integer limit, String type) {
         Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
         
@@ -297,6 +299,7 @@ public class RecommendService {
     }
     
     // 유사 활동 추천
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getSimilarActivities(Long activityId, Integer limit) {
         Optional<ActivityEntity> targetActivity = activityRepository.findById(activityId);
         if (targetActivity.isEmpty()) {
@@ -327,6 +330,7 @@ public class RecommendService {
     }
     
     // 점수 포함 활동 추천 (targetRole 기반)
+    @Transactional(readOnly = true)
     public List<ActivityRecommendationResponse> getRecommendationsWithScores(
             Long userId, Integer limit, String type, Boolean campusOnly, String targetRoleOverride) {
 
@@ -483,6 +487,7 @@ public class RecommendService {
     /**
      * RAG 기반 맞춤 추천 (사용자 프롬프트 기반)
      */
+    @Transactional
     public RecommendResponse getRecommendationsByRequest(RecommendRequest request) {
         if (request.userId() == null) {
             throw new IllegalArgumentException("userId는 필수입니다.");
