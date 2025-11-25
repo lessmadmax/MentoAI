@@ -263,7 +263,7 @@ public class RoleFitService {
         }
 
         // majorMatch = targetRole.majorMapping.get(user.major, 0.5)
-        double majorMatch = 3.0; // 기본값
+        double majorMatch = 10.0; // 기본값
         if (targetRole != null && targetRole.getMajorMapping() != null && !targetRole.getMajorMapping().isEmpty()) {
             String userMajor = profile.getUniversityMajor();
             if (StringUtils.hasText(userMajor)) {

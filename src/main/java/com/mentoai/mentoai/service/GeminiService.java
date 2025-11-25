@@ -23,7 +23,7 @@ public class GeminiService {
     private String apiKey;
 
     private static final String EMBEDDING_MODEL = "text-embedding-004";
-    private static final String TEXT_MODEL = "gemini-1.5-pro-latest";
+    private static final String TEXT_MODEL = "gemini-3-pro-preview";
     private static final String EMBEDDING_API_URL = "https://generativelanguage.googleapis.com/v1/models/" + EMBEDDING_MODEL + ":embedContent";
     private static final String TEXT_GENERATION_API_URL = "https://generativelanguage.googleapis.com/v1/models/" + TEXT_MODEL + ":generateContent";
 
