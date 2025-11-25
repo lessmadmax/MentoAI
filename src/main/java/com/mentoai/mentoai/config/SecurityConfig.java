@@ -1,7 +1,9 @@
 package com.mentoai.mentoai.config;
 
 import com.mentoai.mentoai.security.JwtAuthenticationFilter;
+import com.mentoai.mentoai.security.LocalAuthenticationBypassFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -18,6 +20,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final ObjectProvider<LocalAuthenticationBypassFilter> localAuthenticationBypassFilterProvider;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -35,8 +38,13 @@ public class SecurityConfig {
                                 "/docs/**"
                         ).permitAll()
                         .anyRequest().permitAll()  // 모든 API 접근 허용
-                )
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                );
+
+        localAuthenticationBypassFilterProvider.ifAvailable(filter ->
+                http.addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
+        );
+
+        http.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

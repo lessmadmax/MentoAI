@@ -346,11 +346,18 @@ public class RecommendService {
 
         int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
         int fetchSize = Math.min(safeLimit * 3, 200);
+        ActivityType activityType = parseActivityType(type);
+
+        if (!vectorSearchEnabled) {
+            log.debug("Vector search disabled. Using basic listing for scored recommendations.");
+            return buildRecommendationsFromBasicListing(userId, safeLimit, activityType, campusOnly, targetRoleId);
+        }
+
         List<ActivityRoleMatchService.RoleMatch> matches =
                 activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
         if (matches.isEmpty()) {
             log.warn("No Qdrant matches for scored recommendations: user={}, targetRole={}", userId, targetRoleId);
-            return List.of();
+            return buildRecommendationsFromBasicListing(userId, safeLimit, activityType, campusOnly, targetRoleId);
         }
 
         List<Long> ids = matches.stream()
@@ -361,7 +368,6 @@ public class RecommendService {
         Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
 
-        ActivityType activityType = parseActivityType(type);
         Double roleFitScore = calculateRoleFitScore(userId, targetRoleId);
 
         List<ActivityRecommendationResponse> responses = new ArrayList<>();
@@ -380,6 +386,51 @@ public class RecommendService {
                     : similarityScore;
 
             Double expectedScoreIncrease = calculateExpectedScoreIncrease(activity, userId, targetRoleId);
+            ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+            responses.add(new ActivityRecommendationResponse(
+                    activityResponse,
+                    Math.round(recommendationScore * 10.0) / 10.0,
+                    roleFitScore,
+                    expectedScoreIncrease
+            ));
+
+            if (responses.size() >= safeLimit) {
+                break;
+            }
+        }
+
+        return responses;
+    }
+
+    private List<ActivityRecommendationResponse> buildRecommendationsFromBasicListing(
+            Long userId,
+            int safeLimit,
+            ActivityType activityType,
+            Boolean campusOnly,
+            String targetRoleId) {
+        Pageable pageable = PageRequest.of(0, safeLimit * 3, Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<ActivityEntity> candidates = activityRepository.findByFilters(
+                null,
+                activityType,
+                campusOnly,
+                ActivityStatus.OPEN,
+                pageable
+        ).getContent();
+
+        Double roleFitScore = calculateRoleFitScore(userId, targetRoleId);
+        List<ActivityRecommendationResponse> responses = new ArrayList<>();
+
+        for (ActivityEntity activity : candidates) {
+            if (!matchesBasicFilters(activity, activityType, campusOnly)) {
+                continue;
+            }
+
+            double similarityScore = Math.max(20.0, 70.0 - responses.size() * 5.0);
+            double recommendationScore = roleFitScore != null
+                    ? (similarityScore * 0.7) + (roleFitScore * 0.3)
+                    : similarityScore;
+            Double expectedScoreIncrease = calculateExpectedScoreIncrease(activity, userId, targetRoleId);
+
             ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
             responses.add(new ActivityRecommendationResponse(
                     activityResponse,
