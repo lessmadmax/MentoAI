@@ -7,9 +7,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.core.io.ClassPathResource;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,9 +28,8 @@ public class MetaDataService {
 
     // ==== [1] 설정 파일(application-local.properties)에서 키 가져오기 ====
     
-    // 학교(커리어넷)는 승인 대기 중이라 키 사용 안 함
-    // @Value("${api.careernet.key}")
-    // private String careerNetKey; 
+    @Value("${api.careernet.key}")
+    private String careerNetKey; 
 
     @Value("${api.worknet.major.key}")
     private String worknetMajorKey;     // 학과 정보 키
@@ -123,20 +129,18 @@ public class MetaDataService {
     public List<String> getMajors() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "http://openapi.work.go.kr/opi/opi/major/majorCode/majorCodeList.do"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do"
                        + "?authKey=" + worknetMajorKey
-                       + "&returnType=JSON"
-                       + "&target=MAJORCD"; 
+                       + "&returnType=XML"
+                       + "&callTp=L"
+                       + "&target=MAJORCD"
+                       + "&srchType=A"; 
 
             String responseBody = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(responseBody);
 
-            JsonNode items = root.path("majorCodeList").path("majorList");
-            if (items.isArray()) {
-                for (JsonNode item : items) {
-                    resultList.add(item.path("majorNm").asText());
-                }
-            }
+            // [XML 파싱] 헬퍼 메서드 사용
+            resultList = parseXmlAndGetValues(responseBody, "knowSchDptNm"); // 태그명: knowSchDptNm
+
         } catch (Exception e) {
             System.err.println("❌ 학과 API 호출 실패: " + e.getMessage());
             return List.of("컴퓨터공학과", "소프트웨어학과", "경영학과", "전자공학과", "시각디자인학과", "기계공학과"); 
@@ -148,20 +152,17 @@ public class MetaDataService {
     public List<String> getJobs() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "http://openapi.work.go.kr/opi/opi/jw/jobDictionary.do"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do"
                        + "?authKey=" + worknetJobKey
-                       + "&returnType=JSON"
+                       + "&returnType=XML"
                        + "&target=JOBCD";
-
+            
+            // 1. API 호출
             String responseBody = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(responseBody);
 
-            JsonNode items = root.path("jobDictionary").path("jobList");
-            if (items.isArray()) {
-                for (JsonNode item : items) {
-                    resultList.add(item.path("jobName").asText());
-                }
-            }
+            // 2. XML 파싱 ('jobNm' 태그 추출)
+            resultList = parseXmlAndGetValues(responseBody, "jobNm");
+
         } catch (Exception e) {
             System.err.println("❌ 직업 API 호출 실패: " + e.getMessage());
             return List.of("백엔드 개발자", "프론트엔드 개발자", "AI 엔지니어", "데이터 분석가", "풀스택 개발자", "PM(기획자)", "UI/UX 디자이너");
@@ -173,8 +174,59 @@ public class MetaDataService {
     public List<String> getSchools(String query) {
         if (query == null || query.isBlank()) return List.of();
         
-        return List.of("경희대학교", "서울대학교", "연세대학교", "고려대학교", "성균관대학교", "한양대학교", "서강대학교").stream()
-                .filter(s -> s.contains(query))
-                .toList();
+        List<String> resultList = new ArrayList<>();
+        try {
+            // [수정] 커리어넷 API 호출
+            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi"
+                       + "?apiKey=" + careerNetKey
+                       + "&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list"
+                       + "&searchSchulNm=" + query; // 검색어 파라미터
+
+            String responseBody = restTemplate.getForObject(url, String.class);
+
+            // [JSON 파싱] ObjectMapper 사용
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode contentNode = root.path("dataSearch").path("content");
+
+            if (contentNode.isArray()) {
+                for (JsonNode item : contentNode) {
+                    // 학교명 추출
+                    resultList.add(item.path("schoolName").asText());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("❌ 학교 API 호출 실패: " + e.getMessage());
+            // 실패 시 빈 리스트 반환 (사용자는 검색 결과 없음으로 인지)
+            return List.of(); 
+        }
+        return resultList;
+    }
+
+    // ================================================================================
+    // [Helper] XML 파싱 헬퍼 메서드 (고용24용)
+    // ================================================================================
+    private List<String> parseXmlAndGetValues(String xmlString, String tagName) {
+        List<String> values = new ArrayList<>();
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            // 문자열을 XML 문서로 변환
+            Document doc = builder.parse(new InputSource(new StringReader(xmlString)));
+            
+            // 특정 태그(tagName)를 가진 모든 요소를 찾음
+            NodeList nodeList = doc.getElementsByTagName(tagName);
+            for (int i = 0; i < nodeList.getLength(); i++) {
+                Node node = nodeList.item(i);
+                if (node.getNodeType() == Node.ELEMENT_NODE) {
+                    String value = node.getTextContent();
+                    if (value != null && !value.isBlank()) {
+                        values.add(value);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("XML 파싱 내부 에러: " + e.getMessage());
+        }
+        return values;
     }
 }
