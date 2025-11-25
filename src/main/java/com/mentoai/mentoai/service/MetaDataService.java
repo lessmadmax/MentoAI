@@ -1,15 +1,25 @@
 package com.mentoai.mentoai.service;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.w3c.dom.Document;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathFactory;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -122,19 +132,18 @@ public class MetaDataService {
     public List<String> getMajors() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do?authKey=553fd373-0902-404e-a597-43b15ca86461&returnType=XML&callTp=L&target=MAJORCD&srchType=A"
-                       + "?authKey=" + worknetMajorKey
-                       + "&returnType=JSON"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do"
+                    + "?authKey=" + worknetMajorKey
+                    + "&returnType=XML"
                        + "&target=MAJORCD"; 
 
             String responseBody = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(responseBody);
-
-            JsonNode items = root.path("majorCodeList").path("majorList");
-            if (items.isArray()) {
-                for (JsonNode item : items) {
-                    resultList.add(item.path("majorNm").asText());
-                }
+            List<String> majors = extractValuesFromXml(responseBody, "majorNm", "majorName");
+            if (majors.isEmpty()) {
+                majors = parseMajorsFromJson(responseBody);
+            }
+            if (!majors.isEmpty()) {
+                resultList.addAll(majors);
             }
         } catch (Exception e) {
             System.err.println("❌ 학과 API 호출 실패: " + e.getMessage());
@@ -147,19 +156,18 @@ public class MetaDataService {
     public List<String> getJobs() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do?authKey=5d1031a0-8637-42b7-b7a1-8ce5017632c3&returnType=XML&target=JOBCD"
-                       + "?authKey=" + worknetJobKey
-                       + "&returnType=JSON"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do"
+                    + "?authKey=" + worknetJobKey
+                    + "&returnType=XML"
                        + "&target=JOBCD";
 
             String responseBody = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(responseBody);
-
-            JsonNode items = root.path("jobDictionary").path("jobList");
-            if (items.isArray()) {
-                for (JsonNode item : items) {
-                    resultList.add(item.path("jobName").asText());
-                }
+            List<String> jobs = extractValuesFromXml(responseBody, "jobName", "jobNm", "jobTitle");
+            if (jobs.isEmpty()) {
+                jobs = parseJobsFromJson(responseBody);
+            }
+            if (!jobs.isEmpty()) {
+                resultList.addAll(jobs);
             }
         } catch (Exception e) {
             System.err.println("❌ 직업 API 호출 실패: " + e.getMessage());
@@ -175,7 +183,7 @@ public class MetaDataService {
         List<String> resultList = new ArrayList<>();
         try {
             // [수정] 커리어넷 API 호출
-            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi?apiKey=bb6f170b729a7e19ee897a55162198d3&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list&perPage=1000"
+            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi"
                        + "?apiKey=" + careerNetKey
                        + "&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list"
                        + "&searchSchulNm=" + query; // 검색어 파라미터
@@ -196,5 +204,87 @@ public class MetaDataService {
             return List.of(); 
         }
         return resultList;
+    }
+
+    private List<String> extractValuesFromXml(String xml, String... tagNames) {
+        if (xml == null || xml.isBlank() || tagNames == null || tagNames.length == 0) {
+            return List.of();
+        }
+
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document document = builder.parse(new InputSource(new StringReader(xml)));
+
+            XPath xPath = XPathFactory.newInstance().newXPath();
+
+            for (String tagName : tagNames) {
+                String expression = String.format("//*[local-name()='%s']", tagName);
+                NodeList nodes = (NodeList) xPath.evaluate(expression, document, XPathConstants.NODESET);
+                if (nodes == null || nodes.getLength() == 0) {
+                    continue;
+                }
+                List<String> values = new ArrayList<>();
+                for (int i = 0; i < nodes.getLength(); i++) {
+                    String value = nodes.item(i).getTextContent();
+                    if (value != null && !value.isBlank()) {
+                        values.add(value.trim());
+                    }
+                }
+                if (!values.isEmpty()) {
+                    return values;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("❌ XML 파싱 실패: " + e.getMessage());
+        }
+
+        return List.of();
+    }
+
+    private List<String> parseMajorsFromJson(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode items = root.path("majorCodeList").path("majorList");
+            if (items.isArray()) {
+                List<String> values = new ArrayList<>();
+                for (JsonNode item : items) {
+                    String name = item.path("majorNm").asText(null);
+                    if (name != null && !name.isBlank()) {
+                        values.add(name);
+                    }
+                }
+                return values;
+            }
+        } catch (Exception ignored) {
+        }
+        return List.of();
+    }
+
+    private List<String> parseJobsFromJson(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode items = root.path("jobDictionary").path("jobList");
+            if (items.isArray()) {
+                List<String> values = new ArrayList<>();
+                for (JsonNode item : items) {
+                    String name = item.path("jobName").asText(null);
+                    if (name != null && !name.isBlank()) {
+                        values.add(name);
+                    }
+                }
+                return values;
+            }
+        } catch (Exception ignored) {
+        }
+        return List.of();
     }
 }
