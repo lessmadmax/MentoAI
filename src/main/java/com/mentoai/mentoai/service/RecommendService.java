@@ -16,11 +16,13 @@ import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.util.*;
 import java.util.function.Function;
@@ -39,6 +41,9 @@ public class RecommendService {
     private final UserProfileService userProfileService;
     private final ActivityRoleMatchService activityRoleMatchService;
     private final RecommendChatLogService recommendChatLogService;
+
+    @Value("${recommendation.vector-search.enabled:false}")
+    private boolean vectorSearchEnabled;
     
     // 사용자 맞춤 활동 추천 (targetRole 기반)
     public List<ActivityEntity> getRecommendations(Long userId, Integer limit, String type, Boolean campusOnly) {
@@ -492,9 +497,15 @@ public class RecommendService {
             UserProfileResponse userProfile,
             int limit) {
 
+        if (!vectorSearchEnabled) {
+            log.debug("Vector DB integration disabled. Using fallback activity list only.");
+            return fallbackActivities(request, limit);
+        }
+
         String targetRoleId = userProfile.targetRoleId();
         if (targetRoleId == null || targetRoleId.isBlank()) {
-            return List.of();
+            log.warn("User {} has no targetRoleId configured. Falling back to basic activity list.", userProfile.userId());
+            return fallbackActivities(request, limit);
         }
 
         int fetchSize = Math.min(limit * 3, 200);
@@ -516,26 +527,47 @@ public class RecommendService {
         return matches.stream()
                 .map(match -> activityMap.get(match.activityId()))
                 .filter(Objects::nonNull)
-                .filter(activity -> matchesRequestFilters(activity, request))
+                .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(limit)
                 .collect(Collectors.toList());
     }
 
     private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit) {
         int safeLimit = Math.max(limit, 1);
-        Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "createdAt"));
-        return activityRepository.findByFilters(
+        Pageable pageable = PageRequest.of(0, safeLimit * 3, Sort.by(Sort.Direction.DESC, "createdAt"));
+        
+        // 1. Try with query
+        List<ActivityEntity> candidates = activityRepository.findByFilters(
                         request.query(),
                         null,
                         null,
                         ActivityStatus.OPEN,
                         pageable
-                )
-                .getContent()
-                .stream()
-                .filter(activity -> matchesRequestFilters(activity, request))
+                ).getContent();
+
+        List<ActivityEntity> filtered = candidates.stream()
+                .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(safeLimit)
                 .collect(Collectors.toList());
+
+        // 2. If empty results, try fetching ALL recent activities (ignoring query)
+        if (filtered.isEmpty() && StringUtils.hasText(request.query())) {
+            log.info("No activities matched query '{}'. Falling back to recent activities.", request.query());
+            candidates = activityRepository.findByFilters(
+                        null, // No query
+                        null,
+                        null,
+                        ActivityStatus.OPEN,
+                        pageable
+                ).getContent();
+
+            filtered = candidates.stream()
+                    .filter(activity -> matchesRequestFilters(activity, request, true)) // Ignore query filter
+                    .limit(safeLimit)
+                    .collect(Collectors.toList());
+        }
+
+        return filtered;
     }
     
     /**
@@ -705,6 +737,18 @@ public class RecommendService {
             RecommendRequest request,
             List<ActivityEntity> candidateActivities) {
         
+        // [MODIFIED] Guest fallback
+        if (request.userId() == null) {
+             return new RecommendResponse(candidateActivities.stream()
+                .limit(request.getTopKOrDefault())
+                .map(activity -> new RecommendResponse.RecommendItem(
+                        ActivityMapper.toResponse(activity),
+                        0.0,
+                        "Guest recommendation (fallback)"
+                ))
+                .toList());
+        }
+
         UserProfileResponse profile = userProfileService.getProfile(request.userId());
         String targetRoleId = profile.targetRoleId();
         
@@ -739,8 +783,8 @@ public class RecommendService {
         return reason.toString();
     }
 
-    private boolean matchesRequestFilters(ActivityEntity activity, RecommendRequest request) {
-        if (request.query() != null && !request.query().isBlank()) {
+    private boolean matchesRequestFilters(ActivityEntity activity, RecommendRequest request, boolean ignoreQuery) {
+        if (!ignoreQuery && request.query() != null && !request.query().isBlank()) {
             String normalizedQuery = request.query().trim().toLowerCase();
             if (!containsKeyword(activity, normalizedQuery)) {
                 return false;

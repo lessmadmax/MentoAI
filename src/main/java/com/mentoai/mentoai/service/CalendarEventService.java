@@ -31,6 +31,9 @@ public class CalendarEventService {
     public List<CalendarEventEntity> getCalendarEvents(Long userId, String startDate, String endDate) {
         LocalDateTime start = parseBoundary(startDate, true);
         LocalDateTime end = parseBoundary(endDate, false);
+        if (start == null && end == null) {
+            return calendarEventRepository.findByUserId(userId);
+        }
         return calendarEventRepository.findByUserIdAndDateRange(userId, start, end);
     }
 

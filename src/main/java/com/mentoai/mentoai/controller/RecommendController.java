@@ -15,6 +15,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -28,21 +29,45 @@ import java.util.Map;
 @RequestMapping("/recommend")
 @Tag(name = "recommend", description = "활동 추천")
 @RequiredArgsConstructor
+@Slf4j
 public class RecommendController {
 
     private final RecommendService recommendService;
     private final CalendarEventService calendarEventService;
 
-    @PostMapping
+   /* @PostMapping
     @Operation(summary = "RAG 기반 맞춤 추천", description = "사용자 프로필/관심 태그/자연어 질의를 입력받아 활동 추천을 반환합니다.")
     public ResponseEntity<RecommendResponse> getRecommendations(
             @Valid @RequestBody RecommendRequest request) {
+        log.info("[/recommend] Request received userId={}, query={}, topK={}, useProfileHints={}",
+                request.userId(), request.query(), request.topK(), request.useProfileHints());
         try {
             RecommendResponse response = recommendService.getRecommendationsByRequest(request);
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
+            log.warn("[/recommend] Invalid request userId={}: {}", request.userId(), e.getMessage());
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
+            log.error("[/recommend] Internal server error userId={}: {}", request.userId(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    */
+
+   @PostMapping
+    @Operation(summary = "RAG 기반 맞춤 추천", description = "사용자 프로필/관심 태그/자연어 질의를 입력받아 활동 추천을 반환합니다.")
+    public ResponseEntity<RecommendResponse> getRecommendations(
+            @Valid @RequestBody RecommendRequest request) {
+        log.info("[/recommend] Request received userId={}, query={}, topK={}, useProfileHints={}",
+                request.userId(), request.query(), request.topK(), request.useProfileHints());
+        try {
+            RecommendResponse response = recommendService.getRecommendationsByRequest(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            log.warn("[/recommend] Invalid request userId={}: {}", request.userId(), e.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("[/recommend] Internal server error userId={}: {}", request.userId(), e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
