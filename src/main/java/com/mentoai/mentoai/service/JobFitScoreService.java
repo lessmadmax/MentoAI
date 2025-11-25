@@ -230,7 +230,9 @@ public class JobFitScoreService {
                         ? requirements.expectedSeniority()
                         : jobPosting.getCareerLevel()
         );
-        target.setRequiredSkills(new ArrayList<>(toWeightedSkills(requirements.requiredSkills(), 2.0)));
+        List<WeightedSkill> requiredSkills = new ArrayList<>(toWeightedSkills(requirements.requiredSkills(), 2.0));
+        requiredSkills.addAll(toWeightedSkills(requirements.preferredSkills(), 0.6));
+        target.setRequiredSkills(requiredSkills);
         target.setBonusSkills(new ArrayList<>(toWeightedSkills(requirements.preferredSkills(), 0.6)));
         target.setMajorMapping(new ArrayList<>(toWeightedMajors(requirements)));
 
