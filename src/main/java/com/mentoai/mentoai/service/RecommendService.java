@@ -539,7 +539,7 @@ public class RecommendService {
                 chatLog.getId(),
                 geminiResponse,
                 finalResponse,
-                "gemini-pro"
+                "gemini-1.5-pro-latest"
         );
 
         return finalResponse;
