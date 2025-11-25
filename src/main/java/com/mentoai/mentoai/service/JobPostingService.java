@@ -48,6 +48,19 @@ public class JobPostingService {
     }
 
     @Transactional
+    public List<JobPostingEntity> createJobPostings(List<JobPostingUpsertRequest> requests) {
+        if (CollectionUtils.isEmpty(requests)) {
+            return List.of();
+        }
+
+        List<JobPostingEntity> created = new ArrayList<>();
+        for (JobPostingUpsertRequest request : requests) {
+            created.add(createJobPosting(request));
+        }
+        return created;
+    }
+
+    @Transactional
     public JobPostingEntity updateJobPosting(Long jobId, JobPostingUpsertRequest request) {
         JobPostingEntity entity = jobPostingRepository.findById(jobId)
                 .orElseThrow(() -> new IllegalArgumentException("채용 공고를 찾을 수 없습니다: " + jobId));

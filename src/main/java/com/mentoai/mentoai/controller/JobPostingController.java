@@ -46,6 +46,17 @@ public class JobPostingController {
                 .body(JobPostingMapper.toResponse(created));
     }
 
+    @PostMapping("/bulk")
+    @Operation(summary = "채용 공고 대량 생성")
+    public ResponseEntity<List<JobPostingResponse>> bulkCreateJobPostings(
+            @Valid @RequestBody List<JobPostingUpsertRequest> requests) {
+        List<JobPostingEntity> created = jobPostingService.createJobPostings(requests);
+        List<JobPostingResponse> response = created.stream()
+                .map(JobPostingMapper::toResponse)
+                .toList();
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
     @PutMapping("/{jobId}")
     @Operation(summary = "채용 공고 수정")
     public ResponseEntity<JobPostingResponse> updateJobPosting(

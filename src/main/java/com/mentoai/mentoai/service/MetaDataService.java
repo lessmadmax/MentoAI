@@ -1,22 +1,19 @@
 package com.mentoai.mentoai.service;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.w3c.dom.Document;
+import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
-import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.xpath.XPath;
-import javax.xml.xpath.XPathConstants;
-import javax.xml.xpath.XPathFactory;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.StringReader;
@@ -133,18 +130,17 @@ public class MetaDataService {
         List<String> resultList = new ArrayList<>();
         try {
             String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do"
-                    + "?authKey=" + worknetMajorKey
-                    + "&returnType=XML"
-                       + "&target=MAJORCD"; 
+                       + "?authKey=" + worknetMajorKey
+                       + "&returnType=XML"
+                       + "&callTp=L"
+                       + "&target=MAJORCD"
+                       + "&srchType=A"; 
 
             String responseBody = restTemplate.getForObject(url, String.class);
-            List<String> majors = extractValuesFromXml(responseBody, "majorNm", "majorName");
-            if (majors.isEmpty()) {
-                majors = parseMajorsFromJson(responseBody);
-            }
-            if (!majors.isEmpty()) {
-                resultList.addAll(majors);
-            }
+
+            // [XML 파싱] 헬퍼 메서드 사용
+            resultList = parseXmlAndGetValues(responseBody, "knowSchDptNm"); // 태그명: knowSchDptNm
+
         } catch (Exception e) {
             System.err.println("❌ 학과 API 호출 실패: " + e.getMessage());
             return List.of("컴퓨터공학과", "소프트웨어학과", "경영학과", "전자공학과", "시각디자인학과", "기계공학과"); 
@@ -157,18 +153,16 @@ public class MetaDataService {
         List<String> resultList = new ArrayList<>();
         try {
             String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do"
-                    + "?authKey=" + worknetJobKey
-                    + "&returnType=XML"
+                       + "?authKey=" + worknetJobKey
+                       + "&returnType=XML"
                        + "&target=JOBCD";
-
+            
+            // 1. API 호출
             String responseBody = restTemplate.getForObject(url, String.class);
-            List<String> jobs = extractValuesFromXml(responseBody, "jobName", "jobNm", "jobTitle");
-            if (jobs.isEmpty()) {
-                jobs = parseJobsFromJson(responseBody);
-            }
-            if (!jobs.isEmpty()) {
-                resultList.addAll(jobs);
-            }
+
+            // 2. XML 파싱 ('jobNm' 태그 추출)
+            resultList = parseXmlAndGetValues(responseBody, "jobNm");
+
         } catch (Exception e) {
             System.err.println("❌ 직업 API 호출 실패: " + e.getMessage());
             return List.of("백엔드 개발자", "프론트엔드 개발자", "AI 엔지니어", "데이터 분석가", "풀스택 개발자", "PM(기획자)", "UI/UX 디자이너");
@@ -189,12 +183,14 @@ public class MetaDataService {
                        + "&searchSchulNm=" + query; // 검색어 파라미터
 
             String responseBody = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(responseBody);
 
-            // 커리어넷 JSON 파싱: dataSearch -> content -> schoolName
+            // [JSON 파싱] ObjectMapper 사용
+            JsonNode root = objectMapper.readTree(responseBody);
             JsonNode contentNode = root.path("dataSearch").path("content");
+
             if (contentNode.isArray()) {
                 for (JsonNode item : contentNode) {
+                    // 학교명 추출
                     resultList.add(item.path("schoolName").asText());
                 }
             }
@@ -206,85 +202,31 @@ public class MetaDataService {
         return resultList;
     }
 
-    private List<String> extractValuesFromXml(String xml, String... tagNames) {
-        if (xml == null || xml.isBlank() || tagNames == null || tagNames.length == 0) {
-            return List.of();
-        }
-
+    // ================================================================================
+    // [Helper] XML 파싱 헬퍼 메서드 (고용24용)
+    // ================================================================================
+    private List<String> parseXmlAndGetValues(String xmlString, String tagName) {
+        List<String> values = new ArrayList<>();
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setNamespaceAware(true);
-            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setXIncludeAware(false);
-            factory.setExpandEntityReferences(false);
-
             DocumentBuilder builder = factory.newDocumentBuilder();
-            Document document = builder.parse(new InputSource(new StringReader(xml)));
-
-            XPath xPath = XPathFactory.newInstance().newXPath();
-
-            for (String tagName : tagNames) {
-                String expression = String.format("//*[local-name()='%s']", tagName);
-                NodeList nodes = (NodeList) xPath.evaluate(expression, document, XPathConstants.NODESET);
-                if (nodes == null || nodes.getLength() == 0) {
-                    continue;
-                }
-                List<String> values = new ArrayList<>();
-                for (int i = 0; i < nodes.getLength(); i++) {
-                    String value = nodes.item(i).getTextContent();
+            // 문자열을 XML 문서로 변환
+            Document doc = builder.parse(new InputSource(new StringReader(xmlString)));
+            
+            // 특정 태그(tagName)를 가진 모든 요소를 찾음
+            NodeList nodeList = doc.getElementsByTagName(tagName);
+            for (int i = 0; i < nodeList.getLength(); i++) {
+                Node node = nodeList.item(i);
+                if (node.getNodeType() == Node.ELEMENT_NODE) {
+                    String value = node.getTextContent();
                     if (value != null && !value.isBlank()) {
-                        values.add(value.trim());
+                        values.add(value);
                     }
-                }
-                if (!values.isEmpty()) {
-                    return values;
                 }
             }
         } catch (Exception e) {
-            System.err.println("❌ XML 파싱 실패: " + e.getMessage());
+            System.err.println("XML 파싱 내부 에러: " + e.getMessage());
         }
-
-        return List.of();
-    }
-
-    private List<String> parseMajorsFromJson(String json) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            JsonNode items = root.path("majorCodeList").path("majorList");
-            if (items.isArray()) {
-                List<String> values = new ArrayList<>();
-                for (JsonNode item : items) {
-                    String name = item.path("majorNm").asText(null);
-                    if (name != null && !name.isBlank()) {
-                        values.add(name);
-                    }
-                }
-                return values;
-            }
-        } catch (Exception ignored) {
-        }
-        return List.of();
-    }
-
-    private List<String> parseJobsFromJson(String json) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            JsonNode items = root.path("jobDictionary").path("jobList");
-            if (items.isArray()) {
-                List<String> values = new ArrayList<>();
-                for (JsonNode item : items) {
-                    String name = item.path("jobName").asText(null);
-                    if (name != null && !name.isBlank()) {
-                        values.add(name);
-                    }
-                }
-                return values;
-            }
-        } catch (Exception ignored) {
-        }
-        return List.of();
+        return values;
     }
 }
