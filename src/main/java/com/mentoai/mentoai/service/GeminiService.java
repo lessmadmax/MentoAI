@@ -22,10 +22,10 @@ public class GeminiService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private static final String EMBEDDING_MODEL = "text-embedding-004";
-    private static final String TEXT_MODEL = "gemini-3-pro-preview";
-    private static final String EMBEDDING_API_URL = "https://generativelanguage.googleapis.com/v1/models/" + EMBEDDING_MODEL + ":embedContent";
-    private static final String TEXT_GENERATION_API_URL = "https://generativelanguage.googleapis.com/v1/models/" + TEXT_MODEL + ":generateContent";
+    private static final String EMBEDDING_MODEL = "embedding-001";
+    private static final String TEXT_MODEL = "gemini-2.5-flash";
+    private static final String EMBEDDING_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/" + EMBEDDING_MODEL + ":embedContent";
+    private static final String TEXT_GENERATION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/" + TEXT_MODEL + ":generateContent";
 
     /**
      * 텍스트를 임베딩 벡터로 변환

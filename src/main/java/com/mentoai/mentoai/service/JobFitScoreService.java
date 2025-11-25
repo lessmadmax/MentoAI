@@ -24,7 +24,10 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 @Slf4j
@@ -128,25 +131,32 @@ public class JobFitScoreService {
     }
 
     private JobRequirementPayload fallbackRequirements(JobPostingEntity jobPosting) {
-        List<String> required = extractLines(jobPosting.getRequirements());
-        List<String> preferred = extractLines(jobPosting.getBenefits());
-        List<String> majors = StringUtils.hasText(jobPosting.getEducationLevel())
-                ? List.of(jobPosting.getEducationLevel())
-                : Collections.emptyList();
-        List<String> seniority = StringUtils.hasText(jobPosting.getCareerLevel())
-                ? List.of(jobPosting.getCareerLevel())
-                : Collections.emptyList();
+        List<String> required = new ArrayList<>(extractLines(jobPosting.getRequirements()));
+        List<String> preferred = new ArrayList<>(extractLines(jobPosting.getBenefits()));
+        List<String> requiredMajors = new ArrayList<>();
+        List<String> preferredMajors = new ArrayList<>();
+
+        extractMajorEntries(required, requiredMajors);
+        extractMajorEntries(preferred, preferredMajors);
+
+        if (StringUtils.hasText(jobPosting.getEducationLevel())) {
+            requiredMajors.add(jobPosting.getEducationLevel().trim());
+        }
+
+        String expectedSeniority = StringUtils.hasText(jobPosting.getCareerLevel())
+                ? jobPosting.getCareerLevel()
+                : null;
 
         return new JobRequirementPayload(
                 required,
                 preferred,
                 Collections.emptyList(),
                 Collections.emptyList(),
-                majors,
+                deduplicate(requiredMajors),
+                deduplicate(preferredMajors),
                 Collections.emptyList(),
                 Collections.emptyList(),
-                Collections.emptyList(),
-                seniority.isEmpty() ? null : seniority.get(0)
+                expectedSeniority
         );
     }
 
@@ -159,6 +169,56 @@ public class JobFitScoreService {
                 .map(String::trim)
                 .filter(StringUtils::hasText)
                 .toList();
+    }
+
+    private void extractMajorEntries(List<String> source, List<String> majors) {
+        if (source == null || source.isEmpty()) {
+            return;
+        }
+        Iterator<String> iterator = source.iterator();
+        while (iterator.hasNext()) {
+            String entry = iterator.next();
+            if (looksLikeMajor(entry)) {
+                majors.add(normalizeMajor(entry));
+                iterator.remove();
+            }
+        }
+    }
+
+    private boolean looksLikeMajor(String text) {
+        if (!StringUtils.hasText(text)) {
+            return false;
+        }
+        String normalized = text.toLowerCase(Locale.ROOT);
+        return normalized.contains("학과")
+                || normalized.contains("전공")
+                || normalized.contains("학부")
+                || normalized.contains("major")
+                || normalized.contains("department of");
+    }
+
+    private String normalizeMajor(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return raw;
+        }
+        String sanitized = raw
+                .replaceAll("^[\\s\\-•·\\d\\.\\)\\(]+", "")
+                .replaceAll("[\\s\\-•·\\d\\.\\)\\(]+$", "")
+                .trim();
+        return sanitized.isEmpty() ? raw.trim() : sanitized;
+    }
+
+    private List<String> deduplicate(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Collections.emptyList();
+        }
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                ordered.add(value.trim());
+            }
+        }
+        return new ArrayList<>(ordered);
     }
 
     private TargetRoleEntity buildDynamicTarget(JobPostingEntity jobPosting, JobRequirementPayload requirements) {

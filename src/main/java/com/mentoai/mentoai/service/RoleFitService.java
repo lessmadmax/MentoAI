@@ -38,8 +38,8 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class RoleFitService {
 
-    private static final double SKILL_WEIGHT = 0.75;
-    private static final double EDUCATION_WEIGHT = 0.15;
+    private static final double SKILL_WEIGHT = 0.50;
+    private static final double EDUCATION_WEIGHT = 0.35;
     private static final double EVIDENCE_WEIGHT = 0.10;
 
     private final UserRepository userRepository;
@@ -263,7 +263,7 @@ public class RoleFitService {
         }
 
         // majorMatch = targetRole.majorMapping.get(user.major, 0.5)
-        double majorMatch = 10.0; // 기본값
+        double majorMatch = 3.0; // 기본값
         if (targetRole != null && targetRole.getMajorMapping() != null && !targetRole.getMajorMapping().isEmpty()) {
             String userMajor = profile.getUniversityMajor();
             if (StringUtils.hasText(userMajor)) {

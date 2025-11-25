@@ -417,7 +417,7 @@ public class RecommendService {
                 null,
                 activityType,
                 campusOnly,
-                ActivityStatus.OPEN,
+                null, // allow OPEN + NULL statuses
                 pageable
         ).getContent();
 
@@ -539,7 +539,7 @@ public class RecommendService {
                 chatLog.getId(),
                 geminiResponse,
                 finalResponse,
-                "gemini-3-pro-preview"
+                "gemini-2.5-flash"
         );
 
         return finalResponse;
@@ -597,7 +597,7 @@ public class RecommendService {
                         request.query(),
                         null,
                         null,
-                        ActivityStatus.OPEN,
+                        null, // include entries with NULL status
                         pageable
                 ).getContent();
 
@@ -613,7 +613,7 @@ public class RecommendService {
                         null, // No query
                         null,
                         null,
-                        ActivityStatus.OPEN,
+                        null, // include entries with NULL status
                         pageable
                 ).getContent();
 
@@ -844,28 +844,6 @@ public class RecommendService {
             String normalizedQuery = request.query().trim().toLowerCase();
             if (!containsKeyword(activity, normalizedQuery)) {
                 return false;
-            }
-        }
-
-        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
-            Set<String> preferred = request.preferTags().stream()
-                    .filter(tag -> tag != null && !tag.isBlank())
-                    .map(tag -> tag.trim().toLowerCase())
-                    .collect(Collectors.toSet());
-            if (!preferred.isEmpty()) {
-                if (activity.getActivityTags() == null || activity.getActivityTags().isEmpty()) {
-                    return false;
-                }
-                boolean matched = activity.getActivityTags().stream()
-                        .map(ActivityTagEntity::getTag)
-                        .filter(Objects::nonNull)
-                        .map(TagEntity::getName)
-                        .filter(Objects::nonNull)
-                        .map(String::toLowerCase)
-                        .anyMatch(preferred::contains);
-                if (!matched) {
-                    return false;
-                }
             }
         }
 
