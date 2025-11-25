@@ -25,8 +25,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -39,6 +37,10 @@ import java.util.stream.Collectors;
 @Service
 @Transactional(readOnly = true)
 public class RoleFitService {
+
+    private static final double SKILL_WEIGHT = 0.75;
+    private static final double EDUCATION_WEIGHT = 0.15;
+    private static final double EVIDENCE_WEIGHT = 0.10;
 
     private final UserRepository userRepository;
     private final UserProfileRepository userProfileRepository;
@@ -95,19 +97,18 @@ public class RoleFitService {
         RoleFitResponse base = calculateRoleFit(userId, new RoleFitRequest(request.target(), null));
 
         double skillDelta = clamp((request.addSkills() != null ? request.addSkills().size() : 0) * 0.03);
-        double experienceDelta = clamp((request.addExperiences() != null ? request.addExperiences().size() : 0) * 0.025);
         double evidenceDelta = clamp((request.addCertifications() != null ? request.addCertifications().size() : 0) * 0.02);
         double educationDelta = 0.0;
 
         RoleFitResponse.Breakdown deltaBreakdown = new RoleFitResponse.Breakdown(
                 skillDelta,
-                experienceDelta,
+                0.0,
                 educationDelta,
                 evidenceDelta
         );
 
         double baseScore = base.roleFitScore();
-        double newScore = roundScore(baseScore + (skillDelta + experienceDelta + educationDelta + evidenceDelta) * 25);
+        double newScore = roundScore(baseScore + (skillDelta + educationDelta + evidenceDelta) * 25);
 
         return new RoleFitSimulationResponse(
                 baseScore,
@@ -254,86 +255,6 @@ public class RoleFitService {
 
         double denominator = Math.sqrt(userNorm) * Math.sqrt(targetNorm);
         return denominator > 0 ? dotProduct / denominator : 0.0;
-    }
-
-    private double calculateExperienceFit(UserProfileEntity profile, TargetRoleEntity targetRole) {
-        if (profile == null || profile.getExperiences() == null || profile.getExperiences().isEmpty()) {
-            return 0.0;
-        }
-
-        // 타겟 역할의 스킬 유니버스 생성
-        java.util.Set<String> targetSkillUniverse = new java.util.HashSet<>();
-        if (targetRole != null) {
-            if (targetRole.getRequiredSkills() != null) {
-                for (WeightedSkill skill : targetRole.getRequiredSkills()) {
-                    if (skill.getName() != null) {
-                        targetSkillUniverse.add(skill.getName().toLowerCase(Locale.ROOT));
-                    }
-                }
-            }
-            if (targetRole.getBonusSkills() != null) {
-                for (WeightedSkill skill : targetRole.getBonusSkills()) {
-                    if (skill.getName() != null) {
-                        targetSkillUniverse.add(skill.getName().toLowerCase(Locale.ROOT));
-                    }
-                }
-            }
-        }
-
-        List<UserProfileExperienceEntity> experiences = profile.getExperiences();
-        double totalExperienceFit = 0.0;
-
-        // ExperienceFit = Σ(rel * months * typeWeight)
-        for (UserProfileExperienceEntity exp : experiences) {
-            if (exp == null) {
-                continue;
-            }
-
-            // rel = overlap_ratio(exp.techStack, targetRole.skillUniverse)
-            double rel = calculateOverlapRatio(exp.getTechStack(), targetSkillUniverse);
-
-            // months = clamp(duration_months / 24, 0, 1)
-            double months = 0.0;
-            if (exp.getStartDate() != null) {
-                LocalDate endDate = exp.getEndDate() != null ? exp.getEndDate() : LocalDate.now();
-                long durationMonths = ChronoUnit.MONTHS.between(exp.getStartDate(), endDate);
-                months = clamp(durationMonths / 24.0);
-            }
-
-            // typeWeight = {PROJECT: 1.0, INTERNSHIP: 1.0, RESEARCH: 0.8, PARTTIME: 0.6}
-            double typeWeight = getExperienceTypeWeight(exp.getType());
-
-            totalExperienceFit += rel * months * typeWeight;
-        }
-
-        return clamp(totalExperienceFit);
-    }
-
-    private double calculateOverlapRatio(List<String> expTechStack, java.util.Set<String> targetSkillUniverse) {
-        if (expTechStack == null || expTechStack.isEmpty() || targetSkillUniverse.isEmpty()) {
-            return 0.0;
-        }
-
-        long overlapCount = expTechStack.stream()
-                .map(tech -> tech != null ? tech.toLowerCase(Locale.ROOT) : "")
-                .filter(tech -> targetSkillUniverse.stream()
-                        .anyMatch(target -> tech.contains(target) || target.contains(tech)))
-                .count();
-
-        return (double) overlapCount / expTechStack.size();
-    }
-
-    private double getExperienceTypeWeight(com.mentoai.mentoai.entity.ExperienceType type) {
-        if (type == null) {
-            return 0.5;
-        }
-        return switch (type) {
-            case PROJECT -> 1.0;
-            case INTERNSHIP -> 1.0;
-            case UNDERGRAD_RESEARCH -> 0.8;
-            case PARTTIME -> 0.6;
-            default -> 0.5;
-        };
     }
 
     private double calculateEducationFit(UserProfileEntity profile, TargetRoleEntity targetRole) {
@@ -527,18 +448,19 @@ public class RoleFitService {
                                                  String targetLabel) {
 
         double skillFit = calculateSkillFit(profile, targetRole);
-        double experienceFit = calculateExperienceFit(profile, targetRole);
         double educationFit = calculateEducationFit(profile, targetRole);
         double evidenceFit = calculateEvidenceFit(profile, targetRole);
 
-        double roleFitScore = roundScore((0.50 * skillFit + 0.30 * experienceFit + 0.15 * educationFit + 0.05 * evidenceFit) * 100);
+        double roleFitScore = roundScore(
+                (SKILL_WEIGHT * skillFit + EDUCATION_WEIGHT * educationFit + EVIDENCE_WEIGHT * evidenceFit) * 100
+        );
         List<RoleFitResponse.MissingSkill> missingSkills = buildMissingSkills(profile, targetRole);
         List<String> recommendations = buildRecommendations(targetRole);
 
         return new RoleFitResponse(
                 targetLabel,
                 roleFitScore,
-                new RoleFitResponse.Breakdown(skillFit, experienceFit, educationFit, evidenceFit),
+                new RoleFitResponse.Breakdown(skillFit, 0.0, educationFit, evidenceFit),
                 missingSkills,
                 recommendations
         );
