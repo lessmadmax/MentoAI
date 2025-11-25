@@ -23,6 +23,7 @@ import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Valid;
 import jakarta.validation.Validator;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -103,9 +104,24 @@ public class ActivityController {
     }
 
     @PostMapping
-    @Operation(summary = "활동 생성", description = "새로운 활동을 생성합니다. 원시 데이터(JSON)도 자동 변환합니다.")
-    public ResponseEntity<ActivityResponse> createActivity(@RequestBody JsonNode body) {
+    @Operation(summary = "활동 생성", description = "단건/복수 JSON을 자동 변환하여 활동을 생성합니다.")
+    public ResponseEntity<?> createActivity(@RequestBody JsonNode body) {
         try {
+            if (body == null || body.isNull()) {
+                throw new IllegalArgumentException("요청 본문이 비어 있습니다.");
+            }
+
+            if (body.isArray()) {
+                List<ActivityResponse> responses = new ArrayList<>();
+                for (JsonNode node : body) {
+                    ActivityUpsertRequest request = convertActivityPayload(node);
+                    validate(request);
+                    var created = activityService.createActivity(request);
+                    responses.add(ActivityMapper.toResponse(created));
+                }
+                return ResponseEntity.status(201).body(responses);
+            }
+
             ActivityUpsertRequest request = convertActivityPayload(body);
             validate(request);
             var created = activityService.createActivity(request);

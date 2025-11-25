@@ -9,6 +9,7 @@ import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
+import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.entity.ActivityTagEntity;
 import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
@@ -500,7 +501,8 @@ public class RecommendService {
         List<ActivityRoleMatchService.RoleMatch> matches =
                 activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
         if (matches.isEmpty()) {
-            return List.of();
+            log.warn("No Qdrant matches for target role {}. Falling back to basic listing.", targetRoleId);
+            return fallbackActivities(request, limit);
         }
 
         List<Long> ids = matches.stream()
@@ -516,6 +518,23 @@ public class RecommendService {
                 .filter(Objects::nonNull)
                 .filter(activity -> matchesRequestFilters(activity, request))
                 .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit) {
+        int safeLimit = Math.max(limit, 1);
+        Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "createdAt"));
+        return activityRepository.findByFilters(
+                        request.query(),
+                        null,
+                        null,
+                        ActivityStatus.OPEN,
+                        pageable
+                )
+                .getContent()
+                .stream()
+                .filter(activity -> matchesRequestFilters(activity, request))
+                .limit(safeLimit)
                 .collect(Collectors.toList());
     }
     
