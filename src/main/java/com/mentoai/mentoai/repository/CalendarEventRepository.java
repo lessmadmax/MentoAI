@@ -1,6 +1,7 @@
 package com.mentoai.mentoai.repository;
 
 import com.mentoai.mentoai.entity.CalendarEventEntity;
+import com.mentoai.mentoai.entity.CalendarEventType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -8,13 +9,21 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface CalendarEventRepository extends JpaRepository<CalendarEventEntity, Long> {
     
     // 특정 사용자의 모든 캘린더 이벤트 조회
     List<CalendarEventEntity> findByUserId(Long userId);
-    
+
+    Optional<CalendarEventEntity> findByUserIdAndEventTypeAndActivityId(Long userId,
+                                                                        CalendarEventType eventType,
+                                                                        Long activityId);
+
+    Optional<CalendarEventEntity> findByUserIdAndEventTypeAndJobPostingId(Long userId,
+                                                                          CalendarEventType eventType,
+                                                                          Long jobPostingId);
     // 특정 사용자의 특정 날짜 범위 이벤트 조회
     @Query("SELECT ce FROM CalendarEventEntity ce WHERE ce.userId = :userId " +
            "AND (:startDate IS NULL OR ce.startAt >= :startDate) " +

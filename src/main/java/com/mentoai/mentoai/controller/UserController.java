@@ -8,6 +8,7 @@ import com.mentoai.mentoai.entity.CalendarEventEntity;
 import com.mentoai.mentoai.entity.UserEntity;
 import com.mentoai.mentoai.entity.UserInterestEntity;
 import com.mentoai.mentoai.repository.TagRepository;
+import com.mentoai.mentoai.security.UserPrincipal;
 import com.mentoai.mentoai.service.CalendarEventService;
 import com.mentoai.mentoai.service.UserInterestService;
 import com.mentoai.mentoai.service.UserProfileService;
@@ -19,6 +20,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.DeleteMapping;
 
 import java.util.List;
 import java.util.Map;
@@ -150,7 +153,11 @@ public class UserController {
     public ResponseEntity<List<CalendarEventResponse>> listCalendarEvents(
             @Parameter(description = "사용자 ID") @PathVariable("userId") Long userId,
             @Parameter(description = "시작 날짜 (YYYY-MM-DD)") @RequestParam(required = false) String startDate,
-            @Parameter(description = "종료 날짜 (YYYY-MM-DD)") @RequestParam(required = false) String endDate) {
+            @Parameter(description = "종료 날짜 (YYYY-MM-DD)") @RequestParam(required = false) String endDate,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (!isAuthorized(principal, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         List<CalendarEventEntity> events = calendarEventService.getCalendarEvents(userId, startDate, endDate);
         return ResponseEntity.ok(events.stream().map(this::toCalendarEventResponse).toList());
     }
@@ -159,21 +166,80 @@ public class UserController {
     @Operation(summary = "캘린더 이벤트 생성", description = "사용자의 캘린더에 이벤트를 추가합니다.")
     public ResponseEntity<CalendarEventResponse> createCalendarEvent(
             @Parameter(description = "사용자 ID") @PathVariable("userId") Long userId,
-            @Valid @RequestBody CalendarEventUpsertRequest request) {
-        CalendarEventEntity createdEvent = calendarEventService.createCalendarEvent(userId, request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(toCalendarEventResponse(createdEvent));
+            @Valid @RequestBody CalendarEventUpsertRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (!isAuthorized(principal, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        try {
+            CalendarEventEntity createdEvent = calendarEventService.createCalendarEvent(userId, request);
+            return ResponseEntity.status(HttpStatus.CREATED).body(toCalendarEventResponse(createdEvent));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @GetMapping("/{userId}/calendar/events/{eventId}")
+    @Operation(summary = "캘린더 이벤트 상세", description = "특정 캘린더 이벤트를 조회합니다.")
+    public ResponseEntity<CalendarEventResponse> getCalendarEvent(
+            @Parameter(description = "사용자 ID") @PathVariable("userId") Long userId,
+            @Parameter(description = "이벤트 ID") @PathVariable Long eventId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (!isAuthorized(principal, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return calendarEventService.getCalendarEvent(userId, eventId)
+                .map(this::toCalendarEventResponse)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PutMapping("/{userId}/calendar/events/{eventId}")
+    @Operation(summary = "캘린더 이벤트 수정", description = "기존 캘린더 이벤트를 수정합니다.")
+    public ResponseEntity<CalendarEventResponse> updateCalendarEvent(
+            @Parameter(description = "사용자 ID") @PathVariable("userId") Long userId,
+            @Parameter(description = "이벤트 ID") @PathVariable Long eventId,
+            @Valid @RequestBody CalendarEventUpsertRequest request,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (!isAuthorized(principal, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return calendarEventService.updateCalendarEvent(userId, eventId, request)
+                .map(this::toCalendarEventResponse)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/{userId}/calendar/events/{eventId}")
+    @Operation(summary = "캘린더 이벤트 삭제", description = "캘린더에서 이벤트를 삭제합니다.")
+    public ResponseEntity<Void> deleteCalendarEvent(
+            @Parameter(description = "사용자 ID") @PathVariable("userId") Long userId,
+            @Parameter(description = "이벤트 ID") @PathVariable Long eventId,
+            @AuthenticationPrincipal UserPrincipal principal) {
+        if (!isAuthorized(principal, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        boolean deleted = calendarEventService.deleteCalendarEvent(userId, eventId);
+        return deleted ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 
     private CalendarEventResponse toCalendarEventResponse(CalendarEventEntity entity) {
         return new CalendarEventResponse(
             entity.getId(),
             entity.getUserId(),
+            entity.getEventType(),
             entity.getActivityId(),
+            entity.getJobPostingId(),
+            entity.getRecommendLogId(),
             entity.getStartAt(),
             entity.getEndAt(),
             entity.getAlertMinutes(),
             entity.getCreatedAt()
         );
+    }
+
+    private boolean isAuthorized(UserPrincipal principal, Long userId) {
+        return principal != null && principal.id() != null && principal.id().equals(userId);
     }
 }
 
