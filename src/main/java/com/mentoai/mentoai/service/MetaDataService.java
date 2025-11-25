@@ -122,7 +122,7 @@ public class MetaDataService {
     public List<String> getMajors() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "http://openapi.work.go.kr/opi/opi/major/majorCode/majorCodeList.do"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do?authKey=553fd373-0902-404e-a597-43b15ca86461&returnType=XML&callTp=L&target=MAJORCD&srchType=A"
                        + "?authKey=" + worknetMajorKey
                        + "&returnType=JSON"
                        + "&target=MAJORCD"; 
@@ -147,7 +147,7 @@ public class MetaDataService {
     public List<String> getJobs() {
         List<String> resultList = new ArrayList<>();
         try {
-            String url = "http://openapi.work.go.kr/opi/opi/jw/jobDictionary.do"
+            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do?authKey=5d1031a0-8637-42b7-b7a1-8ce5017632c3&returnType=XML&target=JOBCD"
                        + "?authKey=" + worknetJobKey
                        + "&returnType=JSON"
                        + "&target=JOBCD";
@@ -175,7 +175,7 @@ public class MetaDataService {
         List<String> resultList = new ArrayList<>();
         try {
             // [수정] 커리어넷 API 호출
-            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi"
+            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi?apiKey=bb6f170b729a7e19ee897a55162198d3&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list&perPage=1000"
                        + "?apiKey=" + careerNetKey
                        + "&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list"
                        + "&searchSchulNm=" + query; // 검색어 파라미터
