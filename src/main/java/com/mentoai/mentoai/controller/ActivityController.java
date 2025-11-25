@@ -1,10 +1,14 @@
 package com.mentoai.mentoai.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mentoai.mentoai.controller.dto.*;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.service.ActivityService;
+import com.mentoai.mentoai.service.RawDataSchemaMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,7 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.validation.ConstraintViolationException;
 import jakarta.validation.Valid;
+import jakarta.validation.Validator;
 import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.List;
@@ -29,6 +35,9 @@ import java.util.Optional;
 public class ActivityController {
 
     private final ActivityService activityService;
+    private final RawDataSchemaMapper rawDataSchemaMapper;
+    private final ObjectMapper objectMapper;
+    private final Validator validator;
 
     @GetMapping
     @Transactional(readOnly = true)
@@ -94,12 +103,14 @@ public class ActivityController {
     }
 
     @PostMapping
-    @Operation(summary = "활동 생성", description = "새로운 활동을 생성합니다.")
-    public ResponseEntity<ActivityResponse> createActivity(@Valid @RequestBody ActivityUpsertRequest request) {
+    @Operation(summary = "활동 생성", description = "새로운 활동을 생성합니다. 원시 데이터(JSON)도 자동 변환합니다.")
+    public ResponseEntity<ActivityResponse> createActivity(@RequestBody JsonNode body) {
         try {
+            ActivityUpsertRequest request = convertActivityPayload(body);
+            validate(request);
             var created = activityService.createActivity(request);
             return ResponseEntity.status(201).body(ActivityMapper.toResponse(created));
-        } catch (IllegalArgumentException ex) {
+        } catch (IllegalArgumentException | ConstraintViolationException | JsonProcessingException ex) {
             return ResponseEntity.badRequest().build();
         }
     }
@@ -115,16 +126,18 @@ public class ActivityController {
     }
 
     @PutMapping("/{activityId}")
-    @Operation(summary = "활동 수정", description = "기존 활동 정보를 수정합니다.")
+    @Operation(summary = "활동 수정", description = "기존 활동 정보를 수정합니다. 원시 데이터(JSON)도 자동 변환합니다.")
     public ResponseEntity<ActivityResponse> updateActivity(
             @Parameter(description = "활동 ID") @PathVariable("activityId") Long activityId,
-            @Valid @RequestBody ActivityUpsertRequest request) {
+            @RequestBody JsonNode body) {
         try {
+            ActivityUpsertRequest request = convertActivityPayload(body);
+            validate(request);
             Optional<com.mentoai.mentoai.entity.ActivityEntity> updatedActivity = activityService.updateActivity(activityId, request);
             return updatedActivity.map(ActivityMapper::toResponse)
                                  .map(ResponseEntity::ok)
                              .orElse(ResponseEntity.notFound().build());
-        } catch (IllegalArgumentException ex) {
+        } catch (IllegalArgumentException | ConstraintViolationException | JsonProcessingException ex) {
             return ResponseEntity.badRequest().build();
         }
     }
@@ -161,6 +174,27 @@ public class ActivityController {
             return ResponseEntity.status(201).body(ActivityMapper.toAttachmentResponse(attachment));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.notFound().build();
+        }
+    }
+    private ActivityUpsertRequest convertActivityPayload(JsonNode body) throws JsonProcessingException {
+        if (body == null || body.isNull()) {
+            throw new IllegalArgumentException("요청 본문이 비어 있습니다.");
+        }
+        if (looksLikeRawActivity(body)) {
+            RawActivityPayload raw = objectMapper.treeToValue(body, RawActivityPayload.class);
+            return rawDataSchemaMapper.toActivityRequest(raw);
+        }
+        return objectMapper.treeToValue(body, ActivityUpsertRequest.class);
+    }
+
+    private boolean looksLikeRawActivity(JsonNode node) {
+        return node.hasNonNull("category") && !node.hasNonNull("type");
+    }
+
+    private <T> void validate(T payload) {
+        var violations = validator.validate(payload);
+        if (!violations.isEmpty()) {
+            throw new ConstraintViolationException(violations);
         }
     }
 }

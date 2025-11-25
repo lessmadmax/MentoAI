@@ -57,31 +57,28 @@ public class RoleFitService {
     }
 
     public RoleFitResponse calculateRoleFit(Long userId, RoleFitRequest request) {
-        UserEntity user = getUser(userId);
+        getUser(userId);
         UserProfileEntity profile = userProfileRepository.findById(userId).orElse(null);
-        
+
         String targetRoleId = resolveTarget(request.target());
-        Optional<TargetRoleEntity> targetRoleOpt = targetRoleRepository.findById(targetRoleId);
-        TargetRoleEntity targetRole = targetRoleOpt.orElse(null);
+        TargetRoleEntity targetRole = targetRoleRepository.findById(targetRoleId).orElse(null);
 
-        double skillFit = calculateSkillFit(profile, targetRole);
-        double experienceFit = calculateExperienceFit(profile, targetRole);
-        double educationFit = calculateEducationFit(profile, targetRole);
-        double evidenceFit = calculateEvidenceFit(profile, targetRole);
+        return buildRoleFitResponse(profile, targetRole, targetRoleId);
+    }
 
-        // RoleFitScore = 0.50 * SkillFit + 0.30 * ExperienceFit + 0.15 * EducationFit + 0.05 * EvidenceFit
-        double roleFitScore = roundScore((0.50 * skillFit + 0.30 * experienceFit + 0.15 * educationFit + 0.05 * evidenceFit) * 100);
+    public RoleFitResponse calculateRoleFitAgainstTarget(Long userId,
+                                                         TargetRoleEntity targetRole,
+                                                         String targetLabel) {
+        getUser(userId);
+        UserProfileEntity profile = userProfileRepository.findById(userId).orElse(null);
 
-        List<RoleFitResponse.MissingSkill> missingSkills = buildMissingSkills(profile, targetRole);
-        List<String> recommendations = buildRecommendations(targetRole);
+        String label = StringUtils.hasText(targetLabel)
+                ? targetLabel
+                : targetRole != null && StringUtils.hasText(targetRole.getRoleId())
+                ? targetRole.getRoleId()
+                : "custom";
 
-        return new RoleFitResponse(
-                targetRoleId,
-                roleFitScore,
-                new RoleFitResponse.Breakdown(skillFit, experienceFit, educationFit, evidenceFit),
-                missingSkills,
-                recommendations
-        );
+        return buildRoleFitResponse(profile, targetRole, label);
     }
 
     public List<RoleFitResponse> calculateRoleFitBatch(Long userId, RoleFitBatchRequest request) {
@@ -523,6 +520,28 @@ public class RoleFitService {
         } catch (Exception ex) {
             return recommendService.getTrendingActivities(safeSize, null);
         }
+    }
+
+    private RoleFitResponse buildRoleFitResponse(UserProfileEntity profile,
+                                                 TargetRoleEntity targetRole,
+                                                 String targetLabel) {
+
+        double skillFit = calculateSkillFit(profile, targetRole);
+        double experienceFit = calculateExperienceFit(profile, targetRole);
+        double educationFit = calculateEducationFit(profile, targetRole);
+        double evidenceFit = calculateEvidenceFit(profile, targetRole);
+
+        double roleFitScore = roundScore((0.50 * skillFit + 0.30 * experienceFit + 0.15 * educationFit + 0.05 * evidenceFit) * 100);
+        List<RoleFitResponse.MissingSkill> missingSkills = buildMissingSkills(profile, targetRole);
+        List<String> recommendations = buildRecommendations(targetRole);
+
+        return new RoleFitResponse(
+                targetLabel,
+                roleFitScore,
+                new RoleFitResponse.Breakdown(skillFit, experienceFit, educationFit, evidenceFit),
+                missingSkills,
+                recommendations
+        );
     }
 
     private String buildImprovementReason(ActivityEntity activity, String affects) {
