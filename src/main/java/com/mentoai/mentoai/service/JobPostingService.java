@@ -128,13 +128,8 @@ public class JobPostingService {
             );
         }
 
-        if (StringUtils.hasText(targetRoleId)) {
-            specification = specification.and((root, query, cb) -> {
-                query.distinct(true);
-                Join<JobPostingEntity, JobPostingRoleEntity> join = root.join("targetRoles", JoinType.LEFT);
-                return cb.equal(join.get("id").get("targetRoleId"), targetRoleId);
-            });
-        }
+        // targetRoleId 필터는 현재 공고 데이터에 직무 라벨이 안정적으로 존재하지 않아
+        // 당분간 비활성화한다. (전체 공고 노출)
 
         return jobPostingRepository.findAll(specification, pageable);
     }

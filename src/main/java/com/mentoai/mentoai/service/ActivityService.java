@@ -372,7 +372,17 @@ public class ActivityService {
                 .toList();
 
         if (!missing.isEmpty()) {
-            throw new IllegalArgumentException("존재하지 않는 태그입니다: " + String.join(", ", missing));
+            log.info("Create missing tags on the fly: {}", missing);
+            List<TagEntity> newTags = missing.stream()
+                    .map(name -> {
+                        TagEntity tag = new TagEntity();
+                        tag.setName(name);
+                        tag.setType(TagEntity.TagType.CATEGORY);
+                        return tag;
+                    })
+                    .toList();
+            List<TagEntity> saved = tagRepository.saveAll(newTags);
+            tags.addAll(saved);
         }
 
         for (TagEntity tag : tags) {
