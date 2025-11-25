@@ -4,11 +4,11 @@ ALTER TABLE calendar_events
     ADD COLUMN IF NOT EXISTS recommend_log_id BIGINT;
 
 ALTER TABLE calendar_events
-    ADD CONSTRAINT IF NOT EXISTS fk_calendar_events_job_posting
+    ADD CONSTRAINT fk_calendar_events_job_posting
         FOREIGN KEY (job_posting_id) REFERENCES job_postings(job_id) ON DELETE SET NULL;
 
 ALTER TABLE calendar_events
-    ADD CONSTRAINT IF NOT EXISTS fk_calendar_events_recommend_log
+    ADD CONSTRAINT fk_calendar_events_recommend_log
         FOREIGN KEY (recommend_log_id) REFERENCES recommend_chat_logs(log_id) ON DELETE SET NULL;
 
 UPDATE calendar_events
