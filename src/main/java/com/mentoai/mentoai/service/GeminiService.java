@@ -22,8 +22,8 @@ public class GeminiService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private static final String EMBEDDING_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent";
-    private static final String TEXT_GENERATION_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent";
+    private static final String EMBEDDING_API_URL = "https://generativelanguage.googleapis.com/v1/models/embedding-001:embedContent";
+    private static final String TEXT_GENERATION_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent";
 
     /**
      * 텍스트를 임베딩 벡터로 변환
