@@ -10,7 +10,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 
@@ -53,15 +55,19 @@ public class JobFitScoreEntity {
     @Column(name = "evidence_fit")
     private Double evidenceFit;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "missing_skills", columnDefinition = "jsonb")
     private String missingSkillsJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "recommendations", columnDefinition = "jsonb")
     private String recommendationsJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "improvements", columnDefinition = "jsonb")
     private String improvementsJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "requirements", columnDefinition = "jsonb")
     private String requirementsJson;
 
