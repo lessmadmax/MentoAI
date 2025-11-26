@@ -195,7 +195,7 @@ public class RoleFitService {
         double cosine = calculateCosineSimilarity(userSkillMap, allTargetSkills);
 
         // SkillFit = 0.7 * coverage + 0.3 * cosine
-        return clamp(2.5 * coverage + 2.0 * cosine);
+        return clamp(1.0 * coverage + 0.5 * cosine);
     }
 
     private double skillLevelToNumber(SkillLevel level) {
@@ -263,7 +263,7 @@ public class RoleFitService {
         }
 
         // majorMatch = targetRole.majorMapping.get(user.major, 0.5)
-        double majorMatch = 3.0; // 기본값
+        double majorMatch = 1.5; // 기본값
         if (targetRole != null && targetRole.getMajorMapping() != null && !targetRole.getMajorMapping().isEmpty()) {
             String userMajor = profile.getUniversityMajor();
             if (StringUtils.hasText(userMajor)) {
