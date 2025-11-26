@@ -195,7 +195,7 @@ public class RoleFitService {
         double cosine = calculateCosineSimilarity(userSkillMap, allTargetSkills);
 
         // SkillFit = 0.7 * coverage + 0.3 * cosine
-        return clamp(1.0 * coverage + 0.5 * cosine);
+        return clamp(0.7 * coverage + 0.3 * cosine);
     }
 
     private double skillLevelToNumber(SkillLevel level) {
