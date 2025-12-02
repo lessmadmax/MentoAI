@@ -14,6 +14,9 @@ public record CalendarEventResponse(
         LocalDateTime startAt,
         LocalDateTime endAt,
         Integer alertMinutes,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        String activityTitle,
+        String jobPostingTitle,
+        String jobPostingCompany
 ) {
 }

@@ -159,7 +159,7 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         List<CalendarEventEntity> events = calendarEventService.getCalendarEvents(userId, startDate, endDate);
-        return ResponseEntity.ok(events.stream().map(this::toCalendarEventResponse).toList());
+        return ResponseEntity.ok(events.stream().map(calendarEventService::toResponse).toList());
     }
 
     @PostMapping("/{userId}/calendar/events")
@@ -173,7 +173,7 @@ public class UserController {
         }
         try {
             CalendarEventEntity createdEvent = calendarEventService.createCalendarEvent(userId, request);
-            return ResponseEntity.status(HttpStatus.CREATED).body(toCalendarEventResponse(createdEvent));
+            return ResponseEntity.status(HttpStatus.CREATED).body(calendarEventService.toResponse(createdEvent));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().build();
         }
@@ -189,7 +189,7 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         return calendarEventService.getCalendarEvent(userId, eventId)
-                .map(this::toCalendarEventResponse)
+                .map(calendarEventService::toResponse)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -205,7 +205,7 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         return calendarEventService.updateCalendarEvent(userId, eventId, request)
-                .map(this::toCalendarEventResponse)
+                .map(calendarEventService::toResponse)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -221,21 +221,6 @@ public class UserController {
         }
         boolean deleted = calendarEventService.deleteCalendarEvent(userId, eventId);
         return deleted ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
-    }
-
-    private CalendarEventResponse toCalendarEventResponse(CalendarEventEntity entity) {
-        return new CalendarEventResponse(
-            entity.getId(),
-            entity.getUserId(),
-            entity.getEventType(),
-            entity.getActivityId(),
-            entity.getJobPostingId(),
-            entity.getRecommendLogId(),
-            entity.getStartAt(),
-            entity.getEndAt(),
-            entity.getAlertMinutes(),
-            entity.getCreatedAt()
-        );
     }
 
     private boolean isAuthorized(UserPrincipal principal, Long userId) {

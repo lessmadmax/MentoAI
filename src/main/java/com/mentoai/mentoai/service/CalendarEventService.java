@@ -1,5 +1,6 @@
 package com.mentoai.mentoai.service;
 
+import com.mentoai.mentoai.controller.dto.CalendarEventResponse;
 import com.mentoai.mentoai.controller.dto.CalendarEventUpsertRequest;
 import com.mentoai.mentoai.entity.CalendarEventEntity;
 import com.mentoai.mentoai.entity.CalendarEventType;
@@ -162,6 +163,41 @@ public class CalendarEventService {
                     userId, CalendarEventType.JOB_POSTING, request.jobPostingId());
         }
         return Optional.empty();
+    }
+
+    public CalendarEventResponse toResponse(CalendarEventEntity entity) {
+        String activityTitle = null;
+        if (entity.getActivityId() != null) {
+            activityTitle = activityRepository.findById(entity.getActivityId())
+                    .map(activity -> activity.getTitle() != null ? activity.getTitle() : null)
+                    .orElse(null);
+        }
+
+        String jobPostingTitle = null;
+        String jobPostingCompany = null;
+        if (entity.getJobPostingId() != null) {
+            var job = jobPostingRepository.findById(entity.getJobPostingId()).orElse(null);
+            if (job != null) {
+                jobPostingTitle = job.getTitle();
+                jobPostingCompany = job.getCompanyName();
+            }
+        }
+
+        return new CalendarEventResponse(
+                entity.getId(),
+                entity.getUserId(),
+                entity.getEventType(),
+                entity.getActivityId(),
+                entity.getJobPostingId(),
+                entity.getRecommendLogId(),
+                entity.getStartAt(),
+                entity.getEndAt(),
+                entity.getAlertMinutes(),
+                entity.getCreatedAt(),
+                activityTitle,
+                jobPostingTitle,
+                jobPostingCompany
+        );
     }
 
     private LocalDateTime parseBoundary(String date, boolean isStart) {

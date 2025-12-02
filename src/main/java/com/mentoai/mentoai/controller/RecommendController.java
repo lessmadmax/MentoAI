@@ -167,7 +167,7 @@ public class RecommendController {
                     request.alertMinutes()
             );
             CalendarEventEntity event = calendarEventService.createCalendarEvent(request.userId(), eventRequest);
-            return ResponseEntity.status(HttpStatus.CREATED).body(toCalendarEventResponse(event));
+            return ResponseEntity.status(HttpStatus.CREATED).body(calendarEventService.toResponse(event));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().build();
         }
@@ -177,18 +177,4 @@ public class RecommendController {
         return principal != null && principal.id() != null && principal.id().equals(userId);
     }
 
-    private CalendarEventResponse toCalendarEventResponse(CalendarEventEntity entity) {
-        return new CalendarEventResponse(
-                entity.getId(),
-                entity.getUserId(),
-                entity.getEventType(),
-                entity.getActivityId(),
-                entity.getJobPostingId(),
-                entity.getRecommendLogId(),
-                entity.getStartAt(),
-                entity.getEndAt(),
-                entity.getAlertMinutes(),
-                entity.getCreatedAt()
-        );
-    }
 }
