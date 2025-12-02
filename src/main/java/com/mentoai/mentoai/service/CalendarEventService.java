@@ -41,13 +41,13 @@ public class CalendarEventService {
     public CalendarEventEntity createCalendarEvent(Long userId, CalendarEventUpsertRequest request) {
         assertUserExists(userId);
         validateReference(userId, request);
-        CalendarEventEntity event = findExistingEvent(userId, request)
-                .orElseGet(() -> {
-                    CalendarEventEntity entity = new CalendarEventEntity();
-                    entity.setUserId(userId);
-                    return entity;
-                });
+        Optional<CalendarEventEntity> existingEvent = findExistingEvent(userId, request);
+        if (existingEvent.isPresent()) {
+            return existingEvent.get();
+        }
 
+        CalendarEventEntity event = new CalendarEventEntity();
+        event.setUserId(userId);
         apply(event, request);
         return calendarEventRepository.save(event);
     }

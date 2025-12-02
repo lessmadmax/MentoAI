@@ -2,6 +2,7 @@ package com.mentoai.mentoai.service;
 
 import com.mentoai.mentoai.controller.dto.ActivityRecommendationResponse;
 import com.mentoai.mentoai.controller.dto.ActivityResponse;
+import com.mentoai.mentoai.controller.dto.CalendarEventUpsertRequest;
 import com.mentoai.mentoai.controller.dto.RecommendRequest;
 import com.mentoai.mentoai.controller.dto.RecommendResponse;
 import com.mentoai.mentoai.controller.dto.RoleFitRequest;
@@ -10,10 +11,13 @@ import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
+import com.mentoai.mentoai.entity.ActivityDateEntity;
+import com.mentoai.mentoai.entity.CalendarEventType;
 import com.mentoai.mentoai.entity.ActivityTagEntity;
 import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.UserRepository;
+import com.mentoai.mentoai.service.CalendarEventService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -40,6 +45,7 @@ public class RecommendService {
     private final UserProfileService userProfileService;
     private final ActivityRoleMatchService activityRoleMatchService;
     private final RecommendChatLogService recommendChatLogService;
+    private final CalendarEventService calendarEventService;
 
     @Value("${recommendation.vector-search.enabled:false}")
     private boolean vectorSearchEnabled;
@@ -499,6 +505,8 @@ public class RecommendService {
         
         // 1. 사용자 프로필 수집
         UserProfileResponse userProfile = userProfileService.getProfile(request.userId());
+        String targetRoleId = userProfile.targetRoleId();
+        Double currentRoleFitScore = calculateRoleFitScore(request.userId(), targetRoleId);
 
         // 2. 관련 활동 검색 (Retrieval)
         List<ActivityEntity> candidateActivities = retrieveRelevantActivities(
@@ -527,12 +535,17 @@ public class RecommendService {
             geminiResponse = geminiService.generateText(prompt);
             // 4. Gemini 응답 파싱하여 구조화된 결과 반환
             List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
-                    geminiResponse, candidateActivities, request.getTopKOrDefault()
+                    geminiResponse,
+                    candidateActivities,
+                    request.getTopKOrDefault(),
+                    request.userId(),
+                    targetRoleId,
+                    currentRoleFitScore
             );
             finalResponse = new RecommendResponse(items);
         } catch (Exception e) {
             log.error("Failed to generate recommendation from Gemini API", e);
-            finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities);
+            finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities, currentRoleFitScore);
             geminiResponse = "FALLBACK_USED: " + e.getMessage();
         }
 
@@ -543,6 +556,7 @@ public class RecommendService {
                 "gemini-2.5-flash"
         );
 
+        autoAddCalendarEvents(request.userId(), finalResponse.items(), chatLog.getId());
         return finalResponse;
     }
     
@@ -725,7 +739,10 @@ public class RecommendService {
     private List<RecommendResponse.RecommendItem> parseGeminiRecommendationResponse(
             String geminiResponse,
             List<ActivityEntity> candidateActivities,
-            int topK) {
+            int topK,
+            Long userId,
+            String targetRoleId,
+            Double currentRoleFitScore) {
         
         List<RecommendResponse.RecommendItem> items = new ArrayList<>();
         
@@ -744,11 +761,13 @@ public class RecommendService {
                     
                     if (activityIndex >= 0 && activityIndex < candidateActivities.size()) {
                         ActivityEntity activity = candidateActivities.get(activityIndex);
-                        ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
-                        items.add(new RecommendResponse.RecommendItem(
-                                activityResponse,
+                        items.add(buildRecommendItem(
+                                activity,
                                 score,
-                                reason
+                                reason,
+                                userId,
+                                targetRoleId,
+                                currentRoleFitScore
                         ));
                     }
                 }
@@ -756,7 +775,14 @@ public class RecommendService {
         } catch (Exception e) {
             log.warn("Failed to parse Gemini JSON response, trying text parsing", e);
             // JSON 파싱 실패 시 텍스트 기반 파싱 시도
-            items = parseGeminiTextResponse(geminiResponse, candidateActivities, topK);
+            items = parseGeminiTextResponse(
+                    geminiResponse,
+                    candidateActivities,
+                    topK,
+                    userId,
+                    targetRoleId,
+                    currentRoleFitScore
+            );
         }
         
         // 최대 topK개로 제한
@@ -796,18 +822,23 @@ public class RecommendService {
     private List<RecommendResponse.RecommendItem> parseGeminiTextResponse(
             String geminiResponse,
             List<ActivityEntity> candidateActivities,
-            int topK) {
+            int topK,
+            Long userId,
+            String targetRoleId,
+            Double currentRoleFitScore) {
         
         List<RecommendResponse.RecommendItem> items = new ArrayList<>();
         
         // 간단한 텍스트 파싱 (활동 제목 매칭)
         for (ActivityEntity activity : candidateActivities.stream().limit(topK).toList()) {
             if (geminiResponse.contains(activity.getTitle())) {
-                ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
-                items.add(new RecommendResponse.RecommendItem(
-                        activityResponse,
-                        75.0, // 기본 점수
-                        "사용자의 프로필과 질의를 기반으로 추천되었습니다."
+                items.add(buildRecommendItem(
+                        activity,
+                        75.0,
+                        "사용자의 프로필과 질의를 기반으로 추천되었습니다.",
+                        userId,
+                        targetRoleId,
+                        currentRoleFitScore
                 ));
             }
         }
@@ -820,17 +851,24 @@ public class RecommendService {
      */
     private RecommendResponse fallbackToScoreBasedRecommendation(
             RecommendRequest request,
-            List<ActivityEntity> candidateActivities) {
+            List<ActivityEntity> candidateActivities,
+            Double currentRoleFitScore) {
         
         // [MODIFIED] Guest fallback
         if (request.userId() == null) {
              return new RecommendResponse(candidateActivities.stream()
                 .limit(request.getTopKOrDefault())
-                .map(activity -> new RecommendResponse.RecommendItem(
-                        ActivityMapper.toResponse(activity),
-                        0.0,
-                        "Guest recommendation (fallback)"
-                ))
+                .map(activity -> {
+                    ActivityResponse response = ActivityMapper.toResponse(activity);
+                    return new RecommendResponse.RecommendItem(
+                            response,
+                            0.0,
+                            "Guest recommendation (fallback)",
+                            0.0,
+                            null,
+                            null
+                    );
+                })
                 .toList());
         }
 
@@ -846,11 +884,19 @@ public class RecommendService {
         );
         
         List<RecommendResponse.RecommendItem> items = scored.stream()
-                .map(rec -> new RecommendResponse.RecommendItem(
-                        rec.activity(),
-                        rec.recommendationScore(),
-                        generateSimpleReason(rec)
-                ))
+                .map(rec -> {
+                    Double expectedAfter = (rec.roleFitScore() != null && rec.expectedScoreIncrease() != null)
+                            ? clampScore(rec.roleFitScore() + rec.expectedScoreIncrease())
+                            : null;
+                    return new RecommendResponse.RecommendItem(
+                            rec.activity(),
+                            rec.recommendationScore(),
+                            generateSimpleReason(rec),
+                            rec.recommendationScore(),
+                            rec.expectedScoreIncrease(),
+                            expectedAfter
+                    );
+                })
                 .collect(Collectors.toList());
         
         return new RecommendResponse(items);
@@ -866,6 +912,135 @@ public class RecommendService {
         }
         reason.append("사용자의 목표 직무와 프로필을 기반으로 추천되었습니다.");
         return reason.toString();
+    }
+
+    private RecommendResponse.RecommendItem buildRecommendItem(
+            ActivityEntity activity,
+            Double llmScore,
+            String reason,
+            Long userId,
+            String targetRoleId,
+            Double currentRoleFitScore) {
+        Double expectedIncrease = (userId != null)
+                ? calculateExpectedScoreIncrease(activity, userId, targetRoleId)
+                : null;
+        Double expectedAfter = (currentRoleFitScore != null && expectedIncrease != null)
+                ? clampScore(currentRoleFitScore + expectedIncrease)
+                : null;
+        ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+        Double systemScore = calculateSystemRecommendationScore(llmScore, currentRoleFitScore, expectedIncrease);
+        return new RecommendResponse.RecommendItem(
+                activityResponse,
+                llmScore,
+                reason,
+                systemScore,
+                expectedIncrease,
+                expectedAfter
+        );
+    }
+
+    private Double calculateSystemRecommendationScore(Double llmScore,
+                                                      Double roleFitScore,
+                                                      Double expectedIncrease) {
+        double base = llmScore != null ? llmScore * 0.6 : 60.0;
+        double roleContribution = roleFitScore != null ? roleFitScore * 0.3 : 0.0;
+        double growthContribution = expectedIncrease != null ? expectedIncrease * 10.0 : 0.0;
+        double total = clampScore(base + roleContribution + growthContribution);
+        return Math.round(total * 10.0) / 10.0;
+    }
+
+    private double clampScore(double value) {
+        return Math.max(0.0, Math.min(100.0, value));
+    }
+
+    private void autoAddCalendarEvents(Long userId,
+                                       List<RecommendResponse.RecommendItem> items,
+                                       Long recommendLogId) {
+        if (userId == null || items == null || items.isEmpty()) {
+            return;
+        }
+        for (RecommendResponse.RecommendItem item : items) {
+            if (item.activity() == null || item.activity().activityId() == null) {
+                continue;
+            }
+            try {
+                ActivityEntity activity = activityRepository.findById(item.activity().activityId())
+                        .orElse(null);
+                if (activity == null) {
+                    continue;
+                }
+                CalendarEventUpsertRequest request = buildCalendarEventRequest(activity, recommendLogId);
+                if (request == null) {
+                    continue;
+                }
+                calendarEventService.createCalendarEvent(userId, request);
+            } catch (Exception e) {
+                log.debug("Skip auto calendar add for user {} activity {}: {}", userId, item.activity().activityId(), e.getMessage());
+            }
+        }
+    }
+
+    private CalendarEventUpsertRequest buildCalendarEventRequest(ActivityEntity activity, Long recommendLogId) {
+        LocalDateTime startAt = resolveStartAt(activity);
+        if (startAt == null) {
+            return null;
+        }
+        LocalDateTime endAt = resolveEndAt(activity, startAt);
+        return new CalendarEventUpsertRequest(
+                CalendarEventType.ACTIVITY,
+                activity.getId(),
+                null,
+                recommendLogId,
+                startAt,
+                endAt,
+                30
+        );
+    }
+
+    private LocalDateTime resolveStartAt(ActivityEntity activity) {
+        if (activity.getDates() != null && !activity.getDates().isEmpty()) {
+            Optional<LocalDateTime> eventStart = activity.getDates().stream()
+                    .filter(date -> date.getDateType() == ActivityDateEntity.DateType.EVENT_START)
+                    .map(ActivityDateEntity::getDateValue)
+                    .min(LocalDateTime::compareTo);
+            if (eventStart.isPresent()) {
+                return eventStart.get();
+            }
+            Optional<LocalDateTime> applyStart = activity.getDates().stream()
+                    .filter(date -> date.getDateType() == ActivityDateEntity.DateType.APPLY_START)
+                    .map(ActivityDateEntity::getDateValue)
+                    .min(LocalDateTime::compareTo);
+            if (applyStart.isPresent()) {
+                return applyStart.get();
+            }
+        }
+        if (activity.getPublishedAt() != null) {
+            return activity.getPublishedAt();
+        }
+        if (activity.getCreatedAt() != null) {
+            return activity.getCreatedAt();
+        }
+        return LocalDateTime.now().plusDays(1);
+    }
+
+    private LocalDateTime resolveEndAt(ActivityEntity activity, LocalDateTime startAt) {
+        if (activity.getDates() != null && !activity.getDates().isEmpty()) {
+            Optional<LocalDateTime> eventEnd = activity.getDates().stream()
+                    .filter(date -> date.getDateType() == ActivityDateEntity.DateType.EVENT_END)
+                    .map(ActivityDateEntity::getDateValue)
+                    .max(LocalDateTime::compareTo);
+            if (eventEnd.isPresent()) {
+                return eventEnd.get();
+            }
+            Optional<LocalDateTime> applyEnd = activity.getDates().stream()
+                    .filter(date -> date.getDateType() == ActivityDateEntity.DateType.APPLY_END)
+                    .map(ActivityDateEntity::getDateValue)
+                    .max(LocalDateTime::compareTo);
+            if (applyEnd.isPresent()) {
+                return applyEnd.get();
+            }
+        }
+        return startAt.plusHours(2);
     }
 
     private boolean matchesRequestFilters(ActivityEntity activity, RecommendRequest request, boolean ignoreQuery) {
