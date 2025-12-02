@@ -12,8 +12,8 @@ import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.entity.ActivityDateEntity;
-import com.mentoai.mentoai.entity.CalendarEventType;
 import com.mentoai.mentoai.entity.ActivityTagEntity;
+import com.mentoai.mentoai.entity.CalendarEventType;
 import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.UserRepository;
@@ -582,15 +582,17 @@ public class RecommendService {
             UserProfileResponse userProfile,
             int limit) {
 
+        RecommendIntent intent = inferIntent(request);
+
         if (!vectorSearchEnabled) {
-            log.debug("Vector DB integration disabled. Using fallback activity list only.");
-            return fallbackActivities(request, limit);
+            log.debug("Vector search disabled; using intent-aware fallback.");
+            return fallbackActivities(request, limit, intent);
         }
 
         String targetRoleId = userProfile.targetRoleId();
         if (targetRoleId == null || targetRoleId.isBlank()) {
             log.warn("User {} has no targetRoleId configured. Falling back to basic activity list.", userProfile.userId());
-            return fallbackActivities(request, limit);
+            return fallbackActivities(request, limit, intent);
         }
 
         int fetchSize = Math.min(limit * 3, 200);
@@ -598,7 +600,7 @@ public class RecommendService {
                 activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
         if (matches.isEmpty()) {
             log.warn("No Qdrant matches for target role {}. Falling back to basic listing.", targetRoleId);
-            return fallbackActivities(request, limit);
+            return fallbackActivities(request, limit, intent);
         }
 
         List<Long> ids = matches.stream()
@@ -612,42 +614,46 @@ public class RecommendService {
         return matches.stream()
                 .map(match -> activityMap.get(match.activityId()))
                 .filter(Objects::nonNull)
+                .filter(activity -> matchesIntentFilters(activity, intent))
                 .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(limit)
                 .collect(Collectors.toList());
     }
 
-    private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit) {
+    private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit, RecommendIntent intent) {
         int safeLimit = Math.max(limit, 1);
         Pageable pageable = PageRequest.of(0, safeLimit * 3, Sort.by(Sort.Direction.DESC, "createdAt"));
-        
-        // 1. Try with query
+
         List<ActivityEntity> candidates = activityRepository.findByFilters(
                         request.query(),
+                        intent.inferredType(),
                         null,
                         null,
-                        null, // include entries with NULL status
+                        intent.requiredTags(),
                         pageable
                 ).getContent();
 
         List<ActivityEntity> filtered = candidates.stream()
+                .filter(activity -> matchesIntentFilters(activity, intent))
                 .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(safeLimit)
                 .collect(Collectors.toList());
 
-        // 2. If empty results, try fetching ALL recent activities (ignoring query)
-        if (filtered.isEmpty() && StringUtils.hasText(request.query())) {
-            log.info("No activities matched query '{}'. Falling back to recent activities.", request.query());
+        if (filtered.isEmpty()) {
+            log.info("No activities matched intent {} and query '{}'. Falling back to recent activities.",
+                    intent.normalizedIntent(), request.query());
             candidates = activityRepository.findByFilters(
-                        null, // No query
-                        null,
-                        null,
-                        null, // include entries with NULL status
-                        pageable
-                ).getContent();
+                            null,
+                            intent.inferredType(),
+                            null,
+                            null,
+                            intent.requiredTags(),
+                            pageable
+                    ).getContent();
 
             filtered = candidates.stream()
-                    .filter(activity -> matchesRequestFilters(activity, request, true)) // Ignore query filter
+                    .filter(activity -> matchesIntentFilters(activity, intent))
+                    .filter(activity -> matchesRequestFilters(activity, request, true))
                     .limit(safeLimit)
                     .collect(Collectors.toList());
         }
@@ -700,7 +706,13 @@ public class RecommendService {
         
         // 자연어 질의
         prompt.append("\n=== 사용자 질의 ===\n");
-        prompt.append(request.query() != null ? request.query() : "활동 추천을 요청합니다.").append("\n");
+        if (StringUtils.hasText(request.query())) {
+            prompt.append(request.query())
+                    .append("\n")
+                    .append("위 질의에는 ‘공모전’, ‘대회’, ‘콘테스트’, ‘행사’, ‘공고’ 등 다양한 표현이 섞여 있을 수 있습니다. 같은 의미의 변형 표현도 모두 동일하게 해석하고, 사용자의 의도에 맞춰 가장 관련 있는 활동을 찾으세요.\n");
+        } else {
+            prompt.append("사용자가 적합한 활동을 추천해 달라고 요청했습니다. 공모전/대회/공고/스터디 등 다양한 유형을 폭넓게 검토하여 사용자에게 도움이 될 만한 후보를 제안하세요.\n");
+        }
         
         // 선호 태그
         if (request.preferTags() != null && !request.preferTags().isEmpty()) {
@@ -729,8 +741,8 @@ public class RecommendService {
         prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
         prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
         prompt.append("반드시 JSON만 응답하고, JSON 외 문장/설명/코드 블록을 포함하지 마세요.\n");
-        prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)이고, score는 0-100 사이 숫자, reason은 자연어로 작성하세요.\n");
-        prompt.append("반드시 JSON만 출력하고, JSON 외 텍스트를 포함하지 마세요.");
+        prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)입니다. 사용자가 \"공모전 추천\", \"대회 추천\", \"행사 추천\", \"공고 추천\"처럼 다양한 표현을 사용하더라도 의미를 유연하게 해석하여 가장 관련도 높은 활동을 제안하세요.\n");
+        prompt.append("score는 0-100 사이 숫자이고, reason에는 왜 해당 활동이 사용자에게 도움이 되는지 구체적으로 서술하세요. 반드시 JSON만 출력하고, JSON 외 텍스트를 포함하지 마세요.");
         
         return prompt.toString();
     }
@@ -1054,6 +1066,91 @@ public class RecommendService {
         }
 
         return true;
+    }
+
+    private boolean matchesIntentFilters(ActivityEntity activity, RecommendIntent intent) {
+        if (intent.inferredType() != null && activity.getType() != intent.inferredType()) {
+            return false;
+        }
+        if (!intent.requiredTags().isEmpty()) {
+            Set<String> activityTags = activity.getActivityTags() == null
+                    ? Collections.emptySet()
+                    : activity.getActivityTags().stream()
+                    .map(tag -> tag.getTag() != null ? tag.getTag().getName() : null)
+                    .filter(Objects::nonNull)
+                    .map(name -> name.toLowerCase(Locale.ROOT))
+                    .collect(Collectors.toSet());
+            for (String required : intent.requiredTags()) {
+                if (!activityTags.contains(required.toLowerCase(Locale.ROOT))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private RecommendIntent inferIntent(RecommendRequest request) {
+        if (request.intentHint() != null) {
+            return RecommendIntent.fromHint(request.intentHint());
+        }
+        if (!StringUtils.hasText(request.query())) {
+            return RecommendIntent.defaultIntent();
+        }
+        String normalized = request.query().toLowerCase(Locale.ROOT);
+        if (normalized.contains("공모전") || normalized.contains("대회") || normalized.contains("콘테스트")) {
+            return RecommendIntent.contestIntent();
+        }
+        if (normalized.contains("채용") || normalized.contains("공고") || normalized.contains("취업")) {
+            return RecommendIntent.jobIntent();
+        }
+        if (normalized.contains("스터디") || normalized.contains("공부") || normalized.contains("모임")) {
+            return RecommendIntent.studyIntent();
+        }
+        return RecommendIntent.defaultIntent();
+    }
+
+    private record RecommendIntent(String normalizedIntent,
+                                   ActivityType inferredType,
+                                   List<String> requiredTags) {
+        private static RecommendIntent fromHint(RecommendRequest.IntentHint hint) {
+            ActivityType type = parseActivityTypeSafe(
+                    hint.filter() != null ? hint.filter().activityType() : null);
+            List<String> tags = hint.filter() != null && hint.filter().requiredTags() != null
+                    ? hint.filter().requiredTags()
+                    : List.of();
+            return new RecommendIntent(
+                    hint.normalizedIntent() != null ? hint.normalizedIntent() : "custom",
+                    type,
+                    tags
+            );
+        }
+
+        private static RecommendIntent contestIntent() {
+            return new RecommendIntent("contest", ActivityType.CONTEST, List.of("공모전", "대회"));
+        }
+
+        private static RecommendIntent jobIntent() {
+            return new RecommendIntent("job", ActivityType.JOB, List.of("채용", "공고"));
+        }
+
+        private static RecommendIntent studyIntent() {
+            return new RecommendIntent("study", ActivityType.STUDY, List.of("스터디"));
+        }
+
+        private static RecommendIntent defaultIntent() {
+            return new RecommendIntent("general", null, List.of());
+        }
+    }
+
+    private static ActivityType parseActivityTypeSafe(String type) {
+        if (!StringUtils.hasText(type)) {
+            return null;
+        }
+        try {
+            return ActivityType.valueOf(type.trim().toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     private boolean matchesBasicFilters(ActivityEntity activity, ActivityType type, Boolean campusOnly) {

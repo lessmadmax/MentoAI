@@ -63,7 +63,7 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
         return search(query, type, null, isCampus, status, null, null, pageable);
     }
 
-    default Page<ActivityEntity> findByComplexFilters(
+    default Page<ActivityEntity> findByFilters(
             String query,
             ActivityType type,
             Boolean isCampus,
