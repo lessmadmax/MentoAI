@@ -22,7 +22,7 @@ import java.io.IOException;
  * 별도의 토큰 없이도 기본 사용자로 인증을 채워 넣어 테스트할 수 있도록 한다.
  */
 @Component
-@Profile("local")
+@Profile("h2")
 @RequiredArgsConstructor
 @Slf4j
 public class LocalAuthenticationBypassFilter extends OncePerRequestFilter {

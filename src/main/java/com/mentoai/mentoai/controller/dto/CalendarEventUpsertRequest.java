@@ -1,5 +1,7 @@
 package com.mentoai.mentoai.controller.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.mentoai.mentoai.config.jackson.FlexibleLocalDateTimeDeserializer;
 import com.mentoai.mentoai.entity.CalendarEventType;
 import jakarta.validation.constraints.NotNull;
 
@@ -12,7 +14,9 @@ public record CalendarEventUpsertRequest(
         Long jobPostingId,
         Long recommendLogId,
         @NotNull(message = "startAt은 필수입니다.")
+        @JsonDeserialize(using = FlexibleLocalDateTimeDeserializer.class)
         LocalDateTime startAt,
+        @JsonDeserialize(using = FlexibleLocalDateTimeDeserializer.class)
         LocalDateTime endAt,
         Integer alertMinutes
 ) {

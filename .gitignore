@@ -38,3 +38,4 @@ out/
 
 ### Local Configuration ###
 application-local.properties
+application-h2.properties
