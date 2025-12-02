@@ -810,9 +810,15 @@ public class RecommendService {
         List<RecommendResponse.RecommendItem> items = new ArrayList<>();
         
         try {
+            // JSON 코드 블록 제거 (```json ... ``` 또는 ``` ... ```)
+            String cleanedResponse = geminiResponse
+                    .replaceAll("```json\\s*", "")
+                    .replaceAll("```\\s*", "")
+                    .trim();
+            
             // JSON 파싱 시도
             com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(geminiResponse);
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(cleanedResponse);
             
             com.fasterxml.jackson.databind.JsonNode itemsNode = jsonNode.path("items");
             if (itemsNode.isArray()) {
