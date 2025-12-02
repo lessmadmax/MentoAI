@@ -729,20 +729,8 @@ public class RecommendService {
         prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
         prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
         prompt.append("반드시 JSON만 응답하고, JSON 외 문장/설명/코드 블록을 포함하지 마세요.\n");
-        prompt.append("스키마는 다음과 같습니다 (예시는 값일 뿐입니다).\n");
-        prompt.append("```json\n");
-        prompt.append("{\n");
-        prompt.append("  \"items\": [\n");
-        prompt.append("    {\n");
-        prompt.append("      \"activityIndex\": 1,\n");
-        prompt.append("      \"score\": 85.5,\n");
-        prompt.append("      \"reason\": \"이 공모전은 백엔드 개발 경험을 쌓기에 적합합니다.\"\n");
-        prompt.append("    }\n");
-        prompt.append("  ]\n");
-        prompt.append("}\n");
-        prompt.append("```\n");
         prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)이고, score는 0-100 사이 숫자, reason은 자연어로 작성하세요.\n");
-        prompt.append("JSON 이외의 텍스트를 출력하지 마세요.");
+        prompt.append("반드시 JSON만 출력하고, JSON 외 텍스트를 포함하지 마세요.");
         
         return prompt.toString();
     }
