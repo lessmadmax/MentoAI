@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/meta")
+@RequestMapping("/meta/data")
 @RequiredArgsConstructor
 public class MetaDataController {
 
