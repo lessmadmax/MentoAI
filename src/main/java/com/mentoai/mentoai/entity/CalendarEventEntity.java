@@ -23,8 +23,18 @@ public class CalendarEventEntity {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "event_type")
+    private CalendarEventType eventType = CalendarEventType.CUSTOM;
+
     @Column(name = "activity_id")
     private Long activityId;
+
+    @Column(name = "job_posting_id")
+    private Long jobPostingId;
+
+    @Column(name = "recommend_log_id")
+    private Long recommendLogId;
 
     @Column(name = "start_at")
     private LocalDateTime startAt;

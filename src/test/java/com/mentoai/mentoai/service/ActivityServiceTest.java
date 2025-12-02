@@ -117,7 +117,7 @@ class ActivityServiceTest {
 
         // When
         Page<ActivityEntity> result = activityService.getActivities(
-            null, null, null, null, null, null, 0, 20, "createdAt", "desc");
+            null, null, null, null, null, null, null, 0, 20, "createdAt", "desc");
 
         // Then
         assertNotNull(result);

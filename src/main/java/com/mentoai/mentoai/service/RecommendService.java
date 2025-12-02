@@ -9,123 +9,80 @@ import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
-import com.mentoai.mentoai.entity.UserInterestEntity;
+import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
+import com.mentoai.mentoai.entity.ActivityTagEntity;
+import com.mentoai.mentoai.entity.TagEntity;
 import com.mentoai.mentoai.repository.ActivityRepository;
-import com.mentoai.mentoai.repository.TagRepository;
-import com.mentoai.mentoai.repository.UserInterestRepository;
 import com.mentoai.mentoai.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class RecommendService {
     
     private final ActivityRepository activityRepository;
-    private final UserInterestRepository userInterestRepository;
     private final UserRepository userRepository;
     private final GeminiService geminiService;
     private final RoleFitService roleFitService;
-    private final TagRepository tagRepository;
     private final UserProfileService userProfileService;
-    private final UserInterestService userInterestService;
-    private final TargetRoleService targetRoleService;
+    private final ActivityRoleMatchService activityRoleMatchService;
+    private final RecommendChatLogService recommendChatLogService;
+
+    @Value("${recommendation.vector-search.enabled:false}")
+    private boolean vectorSearchEnabled;
     
-    // 사용자 맞춤 활동 추천
+    // 사용자 맞춤 활동 추천 (targetRole 기반)
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getRecommendations(Long userId, Integer limit, String type, Boolean campusOnly) {
-        // 사용자 존재 확인
         if (!userRepository.existsById(userId)) {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId);
         }
-        
-        // 사용자 관심사 조회
-        List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userId);
-        
-        if (userInterests.isEmpty()) {
-            // 관심사가 없으면 빈 리스트 반환 (모든 활동 반환 X)
-            log.warn("User {} has no interests, returning empty recommendations", userId);
+
+        UserProfileResponse profile = userProfileService.getProfile(userId);
+        String targetRoleId = profile.targetRoleId();
+        if (targetRoleId == null || targetRoleId.isBlank()) {
+            log.warn("User {} has no targetRoleId configured. Returning empty recommendations.", userId);
             return List.of();
         }
-        
-        // 관심사 기반 추천 로직
-        List<ActivityEntity> recommendations = new ArrayList<>();
-        
-        // 1. 관심사 태그와 매칭되는 활동들 찾기
-        List<Long> tagIds = userInterests.stream()
-                .map(UserInterestEntity::getTagId)
+
+        int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
+        int fetchSize = Math.min(Math.max(safeLimit * 2, safeLimit), 200);
+        List<ActivityRoleMatchService.RoleMatch> matches =
+                activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
+        if (matches.isEmpty()) {
+            log.warn("No Qdrant matches for user {} and targetRole {}", userId, targetRoleId);
+            return List.of();
+        }
+
+        List<Long> ids = matches.stream()
+                .map(ActivityRoleMatchService.RoleMatch::activityId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
+
+        ActivityType activityType = parseActivityType(type);
+
+        return matches.stream()
+                .map(match -> activityMap.get(match.activityId()))
+                .filter(Objects::nonNull)
+                .filter(activity -> matchesBasicFilters(activity, activityType, campusOnly))
+                .limit(safeLimit)
                 .collect(Collectors.toList());
-        
-        Pageable pageable = PageRequest.of(0, limit * 2, Sort.by(Sort.Direction.DESC, "createdAt"));
-        
-        // 태그 매칭 활동 조회
-        List<ActivityEntity> tagMatchedActivities = activityRepository.findByFilters(
-                null, // 검색어 없음
-                type != null ? ActivityType.valueOf(type.toUpperCase()) : null,
-                campusOnly,
-                null, // 상태 필터 없음
-                pageable
-        ).getContent();
-        
-        // 태그 매칭 점수 계산
-        Map<ActivityEntity, Double> activityScores = new HashMap<>();
-        
-        for (ActivityEntity activity : tagMatchedActivities) {
-            double score = calculateActivityScore(activity, userInterests);
-            if (score > 0) {
-                activityScores.put(activity, score);
-            }
-        }
-        
-        // 점수 순으로 정렬하여 추천
-        recommendations = activityScores.entrySet().stream()
-                .sorted(Map.Entry.<ActivityEntity, Double>comparingByValue().reversed())
-                .limit(limit)
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toList());
-        
-        // 추천이 부족해도 인기 활동으로 보완하지 않음 (사용자 맞춤만 반환)
-        return recommendations;
-    }
-    
-    // 활동 점수 계산 (관심사 기반)
-    private double calculateActivityScore(ActivityEntity activity, List<UserInterestEntity> userInterests) {
-        double score = 0.0;
-        
-        // 활동의 태그들과 사용자 관심사 매칭
-        if (activity.getActivityTags() != null && !activity.getActivityTags().isEmpty()) {
-            for (var activityTag : activity.getActivityTags()) {
-                for (UserInterestEntity userInterest : userInterests) {
-                    if (activityTag.getTag().getId().equals(userInterest.getTagId())) {
-                        // 관심사 점수(1-5)를 0-50점 범위로 변환 (10배 증가)
-                        score += userInterest.getScore() * 10.0;
-                    }
-                }
-            }
-        }
-        
-        // 활동 유형 선호도 (간단한 규칙 기반)
-        if (activity.getType() == ActivityType.STUDY) {
-            score += 5.0;  // 0.2 -> 5.0
-        } else if (activity.getType() == ActivityType.CONTEST) {
-            score += 3.0;  // 0.1 -> 3.0
-        }
-        
-        // 캠퍼스 활동 가중치
-        if (activity.getIsCampus() != null && activity.getIsCampus()) {
-            score += 2.0;  // 0.1 -> 2.0
-        }
-        
-        return score;
     }
     
     // 의미 기반 검색 (간단한 키워드 매칭)
@@ -135,6 +92,7 @@ public class RecommendService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
     public List<SemanticSearchResult> semanticSearchWithScores(String query, Integer limit, String userId) {
         if (query == null || query.trim().isEmpty()) {
             throw new IllegalArgumentException("검색어는 필수입니다.");
@@ -174,23 +132,6 @@ public class RecommendService {
             }
         }
         
-        // 사용자 관심사 기반 가중치 적용
-        if (userId != null && !userId.isEmpty()) {
-            try {
-                Long userIdLong = Long.valueOf(userId);
-                List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userIdLong);
-                
-                if (!userInterests.isEmpty()) {
-                    activityScores.replaceAll((activity, score) -> {
-                        double interestScore = calculateActivityScore(activity, userInterests);
-                        return score + (interestScore * 0.3); // 관심사 가중치 30%
-                    });
-                }
-            } catch (NumberFormatException e) {
-                // userId가 잘못된 형식이면 무시
-            }
-        }
-        
         // 점수 순으로 정렬하여 반환
         return activityScores.entrySet().stream()
                 .sorted(Map.Entry.<ActivityEntity, Double>comparingByValue().reversed())
@@ -225,23 +166,6 @@ public class RecommendService {
                 }
             } catch (Exception e) {
                 log.warn("Failed to generate embedding for activity {}: {}", activity.getId(), e.getMessage());
-            }
-        }
-        
-        // 사용자 관심사 기반 가중치 적용
-        if (userId != null && !userId.isEmpty()) {
-            try {
-                Long userIdLong = Long.valueOf(userId);
-                List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userIdLong);
-                
-                if (!userInterests.isEmpty()) {
-                    activityScores.replaceAll((activity, score) -> {
-                        double interestScore = calculateActivityScore(activity, userInterests);
-                        return score * 0.7 + (interestScore * 30); // 임베딩 70%, 관심사 30%
-                    });
-                }
-            } catch (NumberFormatException e) {
-                // userId가 잘못된 형식이면 무시
             }
         }
         
@@ -352,6 +276,7 @@ public class RecommendService {
     }
     
     // 인기 활동 조회
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getTrendingActivities(Integer limit, String type) {
         Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
         
@@ -374,6 +299,7 @@ public class RecommendService {
     }
     
     // 유사 활동 추천
+    @Transactional(readOnly = true)
     public List<ActivityEntity> getSimilarActivities(Long activityId, Integer limit) {
         Optional<ActivityEntity> targetActivity = activityRepository.findById(activityId);
         if (targetActivity.isEmpty()) {
@@ -403,108 +329,126 @@ public class RecommendService {
     public record SemanticSearchResult(ActivityEntity activity, double score) {
     }
     
-    // 점수 포함 활동 추천
+    // 점수 포함 활동 추천 (targetRole 기반)
+    @Transactional(readOnly = true)
     public List<ActivityRecommendationResponse> getRecommendationsWithScores(
-            Long userId, Integer limit, String type, Boolean campusOnly, String targetRole) {
-        // 사용자 존재 확인
+            Long userId, Integer limit, String type, Boolean campusOnly, String targetRoleOverride) {
+
         if (!userRepository.existsById(userId)) {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId);
         }
-        
-        // 기본 추천 활동 조회
-        List<ActivityEntity> activities = getRecommendations(userId, limit * 2, type, campusOnly);
-        
-        // 사용자 관심사 조회
-        List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userId);
-        
-        // RoleFitScore 계산 (타겟 직무가 있는 경우)
-        Double roleFitScore = null;
-        if (targetRole != null && !targetRole.trim().isEmpty()) {
-            try {
-                var roleFitResponse = roleFitService.calculateRoleFit(userId, new RoleFitRequest(targetRole, null));
-                roleFitScore = roleFitResponse.roleFitScore();
-            } catch (Exception e) {
-                log.warn("Failed to calculate role fit score for user {} and role {}: {}", userId, targetRole, e.getMessage());
+
+        UserProfileResponse profile = userProfileService.getProfile(userId);
+        String targetRoleId = (targetRoleOverride != null && !targetRoleOverride.isBlank())
+                ? targetRoleOverride.trim()
+                : profile.targetRoleId();
+
+        if (targetRoleId == null || targetRoleId.isBlank()) {
+            log.warn("User {} requested scored recommendations but targetRoleId is missing.", userId);
+            return List.of();
+        }
+
+        int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
+        int fetchSize = Math.min(safeLimit * 3, 200);
+        ActivityType activityType = parseActivityType(type);
+
+        if (!vectorSearchEnabled) {
+            log.debug("Vector search disabled. Using basic listing for scored recommendations.");
+            return buildRecommendationsFromBasicListing(userId, safeLimit, activityType, campusOnly, targetRoleId);
+        }
+
+        List<ActivityRoleMatchService.RoleMatch> matches =
+                activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
+        if (matches.isEmpty()) {
+            log.warn("No Qdrant matches for scored recommendations: user={}, targetRole={}", userId, targetRoleId);
+            return buildRecommendationsFromBasicListing(userId, safeLimit, activityType, campusOnly, targetRoleId);
+        }
+
+        List<Long> ids = matches.stream()
+                .map(ActivityRoleMatchService.RoleMatch::activityId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
+
+        Double roleFitScore = calculateRoleFitScore(userId, targetRoleId);
+
+        List<ActivityRecommendationResponse> responses = new ArrayList<>();
+        for (ActivityRoleMatchService.RoleMatch match : matches) {
+            ActivityEntity activity = activityMap.get(match.activityId());
+            if (activity == null) {
+                continue;
+            }
+            if (!matchesBasicFilters(activity, activityType, campusOnly)) {
+                continue;
+            }
+
+            double similarityScore = match.score() * 100.0;
+            double recommendationScore = roleFitScore != null
+                    ? (similarityScore * 0.7) + (roleFitScore * 0.3)
+                    : similarityScore;
+
+            Double expectedScoreIncrease = calculateExpectedScoreIncrease(activity, userId, targetRoleId);
+            ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+            responses.add(new ActivityRecommendationResponse(
+                    activityResponse,
+                    Math.round(recommendationScore * 10.0) / 10.0,
+                    roleFitScore,
+                    expectedScoreIncrease
+            ));
+
+            if (responses.size() >= safeLimit) {
+                break;
             }
         }
-        
-        // 각 활동에 대해 점수 계산
-        Map<ActivityEntity, ActivityRecommendationResponse> scoredActivities = new HashMap<>();
-        
-        for (ActivityEntity activity : activities) {
-            try {
-                // 1. 관심사 기반 점수 (0-100)
-                double interestScore = calculateActivityScore(activity, userInterests) * 100;
-                
-                // 2. Gemini 임베딩 기반 점수 (0-100) - 활동 텍스트 기반
-                double embeddingScore = 0.0;
-                try {
-                    String activityText = buildActivityText(activity);
-                    List<Double> activityEmbedding = geminiService.generateEmbedding(activityText);
-                    
-                    // 사용자 프로필 기반 검색어 생성 (간단한 키워드 추출)
-                    String userQuery = buildUserQuery(userId, targetRole);
-                    if (userQuery != null && !userQuery.trim().isEmpty()) {
-                        List<Double> queryEmbedding = geminiService.generateEmbedding(userQuery);
-                        double similarity = geminiService.cosineSimilarity(queryEmbedding, activityEmbedding);
-                        embeddingScore = similarity * 100;
-                    }
-                } catch (Exception e) {
-                    log.debug("Failed to calculate embedding score for activity {}: {}", activity.getId(), e.getMessage());
-                }
-                
-                // 3. 최종 추천 점수 계산
-                // 공식: 0.5 * 임베딩 점수 + 0.3 * RoleFitScore + 0.2 * 관심사 점수
-                double recommendationScore;
-                if (roleFitScore != null) {
-                    recommendationScore = 0.5 * embeddingScore + 0.3 * roleFitScore + 0.2 * interestScore;
-                } else {
-                    recommendationScore = 0.7 * embeddingScore + 0.3 * interestScore;
-                }
-                
-                // 4. 예상 점수 증가량 계산
-                Double expectedScoreIncrease = calculateExpectedScoreIncrease(activity, userId, targetRole);
-                
-                ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
-                scoredActivities.put(activity, new ActivityRecommendationResponse(
-                        activityResponse,
-                        Math.round(recommendationScore * 10.0) / 10.0, // 소수점 1자리
-                        roleFitScore,
-                        expectedScoreIncrease
-                ));
-            } catch (Exception e) {
-                log.warn("Failed to calculate score for activity {}: {}", activity.getId(), e.getMessage());
-            }
-        }
-        
-        // 점수 순으로 정렬하여 반환
-        return scoredActivities.values().stream()
-                .sorted(Comparator.comparing(ActivityRecommendationResponse::recommendationScore).reversed())
-                .limit(limit)
-                .collect(Collectors.toList());
+
+        return responses;
     }
-    
-    // 사용자 쿼리 생성 (프로필 기반)
-    private String buildUserQuery(Long userId, String targetRole) {
-        StringBuilder query = new StringBuilder();
-        
-        if (targetRole != null && !targetRole.trim().isEmpty()) {
-            query.append(targetRole).append(" ");
-        }
-        
-        // 사용자 관심사 태그 추가
-        List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userId);
-        if (!userInterests.isEmpty()) {
-            for (UserInterestEntity interest : userInterests) {
-                tagRepository.findById(interest.getTagId()).ifPresent(tag -> {
-                    if (tag.getName() != null) {
-                        query.append(tag.getName()).append(" ");
-                    }
-                });
+
+    private List<ActivityRecommendationResponse> buildRecommendationsFromBasicListing(
+            Long userId,
+            int safeLimit,
+            ActivityType activityType,
+            Boolean campusOnly,
+            String targetRoleId) {
+        Pageable pageable = PageRequest.of(0, safeLimit * 3, Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<ActivityEntity> candidates = activityRepository.findByFilters(
+                null,
+                activityType,
+                campusOnly,
+                null, // allow OPEN + NULL statuses
+                pageable
+        ).getContent();
+
+        Double roleFitScore = calculateRoleFitScore(userId, targetRoleId);
+        List<ActivityRecommendationResponse> responses = new ArrayList<>();
+
+        for (ActivityEntity activity : candidates) {
+            if (!matchesBasicFilters(activity, activityType, campusOnly)) {
+                continue;
+            }
+
+            double similarityScore = Math.max(20.0, 70.0 - responses.size() * 5.0);
+            double recommendationScore = roleFitScore != null
+                    ? (similarityScore * 0.7) + (roleFitScore * 0.3)
+                    : similarityScore;
+            Double expectedScoreIncrease = calculateExpectedScoreIncrease(activity, userId, targetRoleId);
+
+            ActivityResponse activityResponse = ActivityMapper.toResponse(activity);
+            responses.add(new ActivityRecommendationResponse(
+                    activityResponse,
+                    Math.round(recommendationScore * 10.0) / 10.0,
+                    roleFitScore,
+                    expectedScoreIncrease
+            ));
+
+            if (responses.size() >= safeLimit) {
+                break;
             }
         }
-        
-        return query.toString().trim();
+
+        return responses;
     }
     
     // 활동 완료 시 예상 점수 증가량 계산
@@ -543,6 +487,7 @@ public class RecommendService {
     /**
      * RAG 기반 맞춤 추천 (사용자 프롬프트 기반)
      */
+    @Transactional
     public RecommendResponse getRecommendationsByRequest(RecommendRequest request) {
         if (request.userId() == null) {
             throw new IllegalArgumentException("userId는 필수입니다.");
@@ -552,65 +497,53 @@ public class RecommendService {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + request.userId());
         }
         
-        // 1. 사용자 프로필 및 관심사 수집
+        // 1. 사용자 프로필 수집
         UserProfileResponse userProfile = userProfileService.getProfile(request.userId());
-        List<UserInterestEntity> userInterests = userInterestService.getUserInterests(request.userId());
-        
+
         // 2. 관련 활동 검색 (Retrieval)
         List<ActivityEntity> candidateActivities = retrieveRelevantActivities(
-                request, userProfile, userInterests, request.getTopKOrDefault() * 2
+                request, userProfile, request.getTopKOrDefault() * 2
         );
-        
-        // 추가 fallback: 여전히 비어있으면 사용자 관심사 기반으로 재시도
-        if (candidateActivities.isEmpty() && !userInterests.isEmpty()) {
-            log.warn("No candidate activities found after retrieval, trying user interest-based search");
-            // 사용자 관심사 태그로 필터링된 활동만 반환
-            List<String> interestTagNames = userInterests.stream()
-                    .map(interest -> tagRepository.findById(interest.getTagId())
-                            .map(tag -> tag.getName())
-                            .orElse(null))
-                    .filter(name -> name != null)
-                    .distinct()
-                    .collect(Collectors.toList());
-            
-            if (!interestTagNames.isEmpty()) {
-                Pageable pageable = PageRequest.of(0, request.getTopKOrDefault() * 2, 
-                        Sort.by(Sort.Direction.DESC, "createdAt"));
-                candidateActivities = activityRepository.findByComplexFilters(
-                        null, null, null, null,
-                        interestTagNames,
-                        pageable
-                ).getContent();
-            }
-            
-            // 여전히 비어있으면 빈 응답 반환 (사용자 맞춤 활동이 없음)
-            if (candidateActivities.isEmpty()) {
-                log.warn("No personalized activities found for user {}", request.userId());
-                return new RecommendResponse(List.of());
-            }
-        } else if (candidateActivities.isEmpty()) {
-            // 관심사도 없고 검색 결과도 없으면 빈 응답 반환
-            log.warn("No activities found and user has no interests");
+
+        if (candidateActivities.isEmpty()) {
+            log.warn("No personalized activities found for user {}", request.userId());
             return new RecommendResponse(List.of());
         }
         
         // 3. Gemini에 RAG 프롬프트 구성 및 전송
-        String prompt = buildRAGPrompt(request, userProfile, userInterests, candidateActivities);
+        String prompt = buildRAGPrompt(request, userProfile, candidateActivities);
+        log.debug("[/recommend] RAG prompt (userId={}): {}", request.userId(), prompt);
+        var chatLog = recommendChatLogService.createLog(
+                request.userId(),
+                userProfile.targetRoleId(),
+                request,
+                candidateActivities,
+                prompt
+        );
+
         String geminiResponse;
+        RecommendResponse finalResponse;
         try {
             geminiResponse = geminiService.generateText(prompt);
+            // 4. Gemini 응답 파싱하여 구조화된 결과 반환
+            List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
+                    geminiResponse, candidateActivities, request.getTopKOrDefault()
+            );
+            finalResponse = new RecommendResponse(items);
         } catch (Exception e) {
             log.error("Failed to generate recommendation from Gemini API", e);
-            // Fallback: 점수 기반 추천
-            return fallbackToScoreBasedRecommendation(request, candidateActivities);
+            finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities);
+            geminiResponse = "FALLBACK_USED: " + e.getMessage();
         }
-        
-        // 4. Gemini 응답 파싱하여 구조화된 결과 반환
-        List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
-                geminiResponse, candidateActivities, request.getTopKOrDefault()
+
+        recommendChatLogService.completeLog(
+                chatLog.getId(),
+                geminiResponse,
+                finalResponse,
+                "gemini-2.5-flash"
         );
-        
-        return new RecommendResponse(items);
+
+        return finalResponse;
     }
     
     /**
@@ -619,80 +552,79 @@ public class RecommendService {
     private List<ActivityEntity> retrieveRelevantActivities(
             RecommendRequest request,
             UserProfileResponse userProfile,
-            List<UserInterestEntity> userInterests,
             int limit) {
-        
-        List<ActivityEntity> activities = new ArrayList<>();
-        
-        // query가 있으면 의미 기반 검색
-        if (request.query() != null && !request.query().trim().isEmpty()) {
-            List<SemanticSearchResult> searchResults = semanticSearchWithScores(
-                    request.query(),
-                    limit,
-                    request.userId().toString()
-            );
-            activities.addAll(searchResults.stream()
-                    .map(SemanticSearchResult::activity)
-                    .toList());
+
+        if (!vectorSearchEnabled) {
+            log.debug("Vector DB integration disabled. Using fallback activity list only.");
+            return fallbackActivities(request, limit);
         }
-        
-        // preferTags가 있으면 태그 기반 검색
-        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
-            Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
-            // 태그 이름으로 활동 검색 (간단한 구현)
-            for (String tagName : request.preferTags()) {
-                List<ActivityEntity> tagActivities = activityRepository.findByFilters(
-                        tagName,
-                        null,
-                        null,
-                        null,
-                        pageable
-                ).getContent();
-                activities.addAll(tagActivities);
-            }
+
+        String targetRoleId = userProfile.targetRoleId();
+        if (targetRoleId == null || targetRoleId.isBlank()) {
+            log.warn("User {} has no targetRoleId configured. Falling back to basic activity list.", userProfile.userId());
+            return fallbackActivities(request, limit);
         }
-        
-        // 사용자 관심사 기반 검색
-        if (!userInterests.isEmpty() && request.getUseProfileHintsOrDefault()) {
-            Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
-            List<ActivityEntity> interestActivities = getRecommendations(
-                    request.userId(),
-                    limit,
-                    null,
-                    null
-            );
-            activities.addAll(interestActivities);
+
+        int fetchSize = Math.min(limit * 3, 200);
+        List<ActivityRoleMatchService.RoleMatch> matches =
+                activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
+        if (matches.isEmpty()) {
+            log.warn("No Qdrant matches for target role {}. Falling back to basic listing.", targetRoleId);
+            return fallbackActivities(request, limit);
         }
-        
-        // 중복 제거 및 정렬
-        activities = activities.stream()
+
+        List<Long> ids = matches.stream()
+                .map(ActivityRoleMatchService.RoleMatch::activityId)
+                .filter(Objects::nonNull)
                 .distinct()
+                .toList();
+        Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
+
+        return matches.stream()
+                .map(match -> activityMap.get(match.activityId()))
+                .filter(Objects::nonNull)
+                .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(limit)
                 .collect(Collectors.toList());
+    }
+
+    private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit) {
+        int safeLimit = Math.max(limit, 1);
+        Pageable pageable = PageRequest.of(0, safeLimit * 3, Sort.by(Sort.Direction.DESC, "createdAt"));
         
-        // 결과가 없으면 사용자 관심사 기반 추천으로 fallback (일반 활동 목록 X)
-        if (activities.isEmpty() && !userInterests.isEmpty()) {
-            log.warn("No relevant activities found, using user interest-based recommendations");
-            // 사용자 관심사 태그로 필터링된 활동만 반환
-            List<String> interestTagNames = userInterests.stream()
-                    .map(interest -> tagRepository.findById(interest.getTagId())
-                            .map(tag -> tag.getName())
-                            .orElse(null))
-                    .filter(name -> name != null)
-                    .distinct()
-                    .collect(Collectors.toList());
-            
-            if (!interestTagNames.isEmpty()) {
-                Pageable pageable = PageRequest.of(0, limit, Sort.by(Sort.Direction.DESC, "createdAt"));
-                activities = activityRepository.findByComplexFilters(
-                        null, null, null, null,
-                        interestTagNames,
+        // 1. Try with query
+        List<ActivityEntity> candidates = activityRepository.findByFilters(
+                        request.query(),
+                        null,
+                        null,
+                        null, // include entries with NULL status
                         pageable
                 ).getContent();
-            }
+
+        List<ActivityEntity> filtered = candidates.stream()
+                .filter(activity -> matchesRequestFilters(activity, request, false))
+                .limit(safeLimit)
+                .collect(Collectors.toList());
+
+        // 2. If empty results, try fetching ALL recent activities (ignoring query)
+        if (filtered.isEmpty() && StringUtils.hasText(request.query())) {
+            log.info("No activities matched query '{}'. Falling back to recent activities.", request.query());
+            candidates = activityRepository.findByFilters(
+                        null, // No query
+                        null,
+                        null,
+                        null, // include entries with NULL status
+                        pageable
+                ).getContent();
+
+            filtered = candidates.stream()
+                    .filter(activity -> matchesRequestFilters(activity, request, true)) // Ignore query filter
+                    .limit(safeLimit)
+                    .collect(Collectors.toList());
         }
-        
-        return activities;
+
+        return filtered;
     }
     
     /**
@@ -701,7 +633,6 @@ public class RecommendService {
     private String buildRAGPrompt(
             RecommendRequest request,
             UserProfileResponse userProfile,
-            List<UserInterestEntity> userInterests,
             List<ActivityEntity> activities) {
         
         StringBuilder prompt = new StringBuilder();
@@ -720,19 +651,6 @@ public class RecommendService {
         // 관심 분야
         if (userProfile.interestDomains() != null && !userProfile.interestDomains().isEmpty()) {
             prompt.append("관심 분야: ").append(String.join(", ", userProfile.interestDomains())).append("\n");
-        }
-        
-        // 관심 태그
-        if (!userInterests.isEmpty()) {
-            List<String> interestTags = userInterests.stream()
-                    .map(interest -> tagRepository.findById(interest.getTagId())
-                            .map(tag -> tag.getName())
-                            .orElse(""))
-                    .filter(name -> !name.isEmpty())
-                    .toList();
-            if (!interestTags.isEmpty()) {
-                prompt.append("관심 태그: ").append(String.join(", ", interestTags)).append("\n");
-            }
         }
         
         // 기술 스택
@@ -782,19 +700,21 @@ public class RecommendService {
         prompt.append("\n=== 요청사항 ===\n");
         prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
         prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
-        prompt.append("JSON 형식으로 반환해주세요:\n");
+        prompt.append("반드시 JSON만 응답하고, JSON 외 문장/설명/코드 블록을 포함하지 마세요.\n");
+        prompt.append("스키마는 다음과 같습니다 (예시는 값일 뿐입니다).\n");
+        prompt.append("```json\n");
         prompt.append("{\n");
         prompt.append("  \"items\": [\n");
         prompt.append("    {\n");
         prompt.append("      \"activityIndex\": 1,\n");
         prompt.append("      \"score\": 85.5,\n");
-        prompt.append("      \"reason\": \"이 공모전은 백엔드 개발 경험을 쌓기에 적합합니다. 사용자의 Spring Boot 경험과 연계하여 실무 역량을 향상시킬 수 있습니다.\"\n");
+        prompt.append("      \"reason\": \"이 공모전은 백엔드 개발 경험을 쌓기에 적합합니다.\"\n");
         prompt.append("    }\n");
         prompt.append("  ]\n");
         prompt.append("}\n");
-        prompt.append("activityIndex는 위 후보 활동 목록의 번호(1부터 시작)입니다.\n");
-        prompt.append("score는 0-100 사이의 추천 점수입니다.\n");
-        prompt.append("reason은 사용자가 이해하기 쉬운 자연어로 작성해주세요.");
+        prompt.append("```\n");
+        prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)이고, score는 0-100 사이 숫자, reason은 자연어로 작성하세요.\n");
+        prompt.append("JSON 이외의 텍스트를 출력하지 마세요.");
         
         return prompt.toString();
     }
@@ -812,7 +732,8 @@ public class RecommendService {
         try {
             // JSON 파싱 시도
             com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(geminiResponse);
+            String normalizedResponse = extractJsonFragment(geminiResponse);
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(normalizedResponse);
             
             com.fasterxml.jackson.databind.JsonNode itemsNode = jsonNode.path("items");
             if (itemsNode.isArray()) {
@@ -842,6 +763,31 @@ public class RecommendService {
         return items.stream()
                 .limit(topK)
                 .collect(Collectors.toList());
+    }
+
+    private String extractJsonFragment(String geminiResponse) {
+        if (geminiResponse == null) {
+            return "";
+        }
+        String trimmed = geminiResponse.trim();
+        if (trimmed.startsWith("```")) {
+            int start = trimmed.indexOf('\n');
+            int end = trimmed.lastIndexOf("```");
+            if (start >= 0 && end > start) {
+                trimmed = trimmed.substring(start + 1, end).trim();
+            }
+        }
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            return trimmed;
+        }
+        int firstBrace = trimmed.indexOf('{');
+        if (firstBrace >= 0) {
+            int lastBrace = trimmed.lastIndexOf('}');
+            if (lastBrace >= firstBrace) {
+                return trimmed.substring(firstBrace, lastBrace + 1);
+            }
+        }
+        return trimmed;
     }
     
     /**
@@ -876,18 +822,27 @@ public class RecommendService {
             RecommendRequest request,
             List<ActivityEntity> candidateActivities) {
         
-        // preferTags에서 targetRole 추출 시도
-        String targetRole = null;
-        if (request.preferTags() != null && !request.preferTags().isEmpty()) {
-            targetRole = request.preferTags().get(0);
+        // [MODIFIED] Guest fallback
+        if (request.userId() == null) {
+             return new RecommendResponse(candidateActivities.stream()
+                .limit(request.getTopKOrDefault())
+                .map(activity -> new RecommendResponse.RecommendItem(
+                        ActivityMapper.toResponse(activity),
+                        0.0,
+                        "Guest recommendation (fallback)"
+                ))
+                .toList());
         }
+
+        UserProfileResponse profile = userProfileService.getProfile(request.userId());
+        String targetRoleId = profile.targetRoleId();
         
         List<ActivityRecommendationResponse> scored = getRecommendationsWithScores(
                 request.userId(),
                 request.getTopKOrDefault(),
                 null,
                 null,
-                targetRole
+                targetRoleId
         );
         
         List<RecommendResponse.RecommendItem> items = scored.stream()
@@ -909,7 +864,72 @@ public class RecommendService {
         if (rec.roleFitScore() != null) {
             reason.append(String.format("직무 적합도: %.1f점. ", rec.roleFitScore()));
         }
-        reason.append("사용자의 관심사와 프로필을 기반으로 추천되었습니다.");
+        reason.append("사용자의 목표 직무와 프로필을 기반으로 추천되었습니다.");
         return reason.toString();
+    }
+
+    private boolean matchesRequestFilters(ActivityEntity activity, RecommendRequest request, boolean ignoreQuery) {
+        if (!ignoreQuery && request.query() != null && !request.query().isBlank()) {
+            String normalizedQuery = request.query().trim().toLowerCase();
+            if (!containsKeyword(activity, normalizedQuery)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean matchesBasicFilters(ActivityEntity activity, ActivityType type, Boolean campusOnly) {
+        if (type != null && activity.getType() != type) {
+            return false;
+        }
+        if (campusOnly != null) {
+            boolean isCampusActivity = Boolean.TRUE.equals(activity.getIsCampus());
+            if (!campusOnly.equals(isCampusActivity)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean containsKeyword(ActivityEntity activity, String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return true;
+        }
+        String title = activity.getTitle() != null ? activity.getTitle().toLowerCase() : "";
+        if (title.contains(keyword)) {
+            return true;
+        }
+        String summary = activity.getSummary() != null ? activity.getSummary().toLowerCase() : "";
+        if (summary.contains(keyword)) {
+            return true;
+        }
+        String content = activity.getContent() != null ? activity.getContent().toLowerCase() : "";
+        return content.contains(keyword);
+    }
+
+    private Double calculateRoleFitScore(Long userId, String targetRoleId) {
+        if (targetRoleId == null || targetRoleId.isBlank()) {
+            return null;
+        }
+        try {
+            var roleFitResponse = roleFitService.calculateRoleFit(userId, new RoleFitRequest(targetRoleId, null));
+            return roleFitResponse.roleFitScore();
+        } catch (Exception e) {
+            log.warn("Failed to calculate role fit score for user {} and role {}: {}", userId, targetRoleId, e.getMessage());
+            return null;
+        }
+    }
+
+    private ActivityType parseActivityType(String type) {
+        if (type == null || type.isBlank()) {
+            return null;
+        }
+        try {
+            return ActivityType.valueOf(type.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            log.warn("Unsupported activity type filter: {}", type);
+            return null;
+        }
     }
 }

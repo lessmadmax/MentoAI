@@ -37,6 +37,7 @@ public class IngestService {
     private final ActivityRepository activityRepository;
     private final TagRepository tagRepository;
     private final ExternalCrawlerService externalCrawlerService;
+    private final ActivityRoleMatchService activityRoleMatchService;
     private final ExecutorService executorService = Executors.newFixedThreadPool(5);
     
     // 데이터 수집 트리거
@@ -104,7 +105,8 @@ public class IngestService {
                 activity.setIsCampus(true);
                 activity.setType(ActivityEntity.ActivityType.CAMPUS);
                 
-                activityRepository.save(activity);
+                ActivityEntity saved = activityRepository.save(activity);
+                activityRoleMatchService.indexActivity(saved);
                 created++;
                 
                 log.debug("Created campus activity: {}", activity.getTitle());
@@ -129,7 +131,8 @@ public class IngestService {
                 ActivityEntity activity = createActivityFromData(activityData);
                 activity.setIsCampus(false);
                 
-                activityRepository.save(activity);
+                ActivityEntity saved = activityRepository.save(activity);
+                activityRoleMatchService.indexActivity(saved);
                 created++;
                 
                 log.debug("Created external activity: {}", activity.getTitle());
@@ -175,7 +178,8 @@ public class IngestService {
                 }
                 
                 ActivityEntity activity = createActivityFromData(activityData);
-                activityRepository.save(activity);
+                ActivityEntity saved = activityRepository.save(activity);
+                activityRoleMatchService.indexActivity(saved);
                 created++;
                 
                 log.debug("Created manual activity: {}", activity.getTitle());
@@ -456,7 +460,8 @@ public class IngestService {
                 }
                 
                 ActivityEntity activity = convertExternalActivityToEntity(externalActivity);
-                activityRepository.save(activity);
+                ActivityEntity saved = activityRepository.save(activity);
+                activityRoleMatchService.indexActivity(saved);
                 created++;
                 
                 log.debug("Created external activity from {}: {}", source, activity.getTitle());

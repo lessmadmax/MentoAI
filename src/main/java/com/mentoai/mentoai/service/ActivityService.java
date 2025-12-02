@@ -3,40 +3,42 @@ package com.mentoai.mentoai.service;
 import com.mentoai.mentoai.controller.dto.ActivityDateUpsertRequest;
 import com.mentoai.mentoai.controller.dto.ActivityUpsertRequest;
 import com.mentoai.mentoai.controller.dto.AttachmentUpsertRequest;
+import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.entity.*;
-import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
-import com.mentoai.mentoai.entity.UserInterestEntity;
+import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.TagRepository;
-import com.mentoai.mentoai.repository.UserInterestRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class ActivityService {
-    
+
+    private static final int MAX_ROLE_MATCH_FETCH = 200;
+
     private final ActivityRepository activityRepository;
     private final TagRepository tagRepository;
     private final NotificationService notificationService;
-    private final RecommendService recommendService;
-    private final UserInterestRepository userInterestRepository;
+    private final ActivityRoleMatchService activityRoleMatchService;
+    private final UserProfileService userProfileService;
     
     public Page<ActivityEntity> getActivities(
             Long userId,
@@ -86,7 +88,7 @@ public class ActivityService {
     }
     
     /**
-     * 사용자 맞춤 활동 목록 조회
+     * targetRoleId 기반 사용자 맞춤 활동 목록 조회
      */
     private Page<ActivityEntity> getPersonalizedActivities(
             Long userId,
@@ -96,100 +98,53 @@ public class ActivityService {
             Boolean isCampus,
             ActivityStatus status,
             Pageable pageable) {
-        
-        // 사용자 관심사 조회
-        List<UserInterestEntity> userInterests = userInterestRepository.findByUserIdOrderByScoreDesc(userId);
-        
-        if (userInterests.isEmpty()) {
-            // 관심사가 없으면 일반 조회로 fallback
-            return activityRepository.search(
-                    query,
-                    type,
-                    (tagNames == null || tagNames.isEmpty()) ? null : tagNames,
-                    isCampus,
-                    status,
-                    null,
-                    ActivityDateEntity.DateType.APPLY_END,
-                    pageable
-            );
+
+        UserProfileResponse profile = userProfileService.getProfile(userId);
+        String targetRoleId = profile.targetRoleId();
+        if (targetRoleId == null || targetRoleId.isBlank()) {
+            log.warn("User {} has no targetRoleId configured. Returning empty page.", userId);
+            return Page.empty(pageable);
         }
-        
-        // 먼저 필터 조건으로 활동 조회 (더 많은 결과 가져오기)
-        Page<ActivityEntity> filteredActivities = activityRepository.search(
-                query,
-                type,
-                (tagNames == null || tagNames.isEmpty()) ? null : tagNames,
-                isCampus,
-                status,
-                null,
-                ActivityDateEntity.DateType.APPLY_END,
-                Pageable.unpaged() // 모든 결과 가져오기
-        );
-        
-        // 사용자 관심사 태그 ID 목록
-        List<Long> userInterestTagIds = userInterests.stream()
-                .map(UserInterestEntity::getTagId)
-                .collect(Collectors.toList());
-        
-        // 최소 점수 임계값 설정 (예: 5.0)
-        // 관심사 태그가 하나도 매칭되지 않으면 최소 점수도 받지 못함
-        double MIN_SCORE_THRESHOLD = 5.0;
-        
-        // 활동별 점수 계산 및 정렬
-        Map<ActivityEntity, Double> activityScores = new HashMap<>();
-        for (ActivityEntity activity : filteredActivities.getContent()) {
-            double score = 0.0;
-            
-            // 활동의 태그와 사용자 관심사 매칭
-            if (activity.getActivityTags() != null && !activity.getActivityTags().isEmpty()) {
-                for (var activityTag : activity.getActivityTags()) {
-                    if (userInterestTagIds.contains(activityTag.getTag().getId())) {
-                        // 관심사 점수에 따라 가중치 적용 (RecommendService와 동일한 로직)
-                        UserInterestEntity matchingInterest = userInterests.stream()
-                                .filter(ui -> ui.getTagId().equals(activityTag.getTag().getId()))
-                                .findFirst()
-                                .orElse(null);
-                        if (matchingInterest != null) {
-                            score += matchingInterest.getScore() * 10.0;
-                        }
-                    }
-                }
-            }
-            
-            // 활동 유형 보너스
-            if (activity.getType() == ActivityType.STUDY) {
-                score += 5.0;
-            } else if (activity.getType() == ActivityType.CONTEST) {
-                score += 3.0;
-            }
-            
-            // 캠퍼스 활동 가중치
-            if (activity.getIsCampus() != null && activity.getIsCampus()) {
-                score += 2.0;
-            }
-            
-            // 최소 점수 임계값 이상인 활동만 추가
-            if (score >= MIN_SCORE_THRESHOLD) {
-                activityScores.put(activity, score);
-            }
+
+        int fetchSize = determineFetchSize(pageable);
+        List<ActivityRoleMatchService.RoleMatch> matches =
+                activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
+        if (matches.isEmpty()) {
+            log.warn("No Qdrant matches found for user {} and role {}", userId, targetRoleId);
+            return Page.empty(pageable);
         }
-        
-        // 점수 순으로 정렬
-        List<ActivityEntity> personalizedList = activityScores.entrySet().stream()
-                .sorted(Map.Entry.<ActivityEntity, Double>comparingByValue().reversed())
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toList());
-        
-        // 점수가 0인 활동 추가 로직 제거 (이미 필터링됨)
-        
-        // 페이지네이션 적용
+
+        List<Long> ids = matches.stream()
+                .map(ActivityRoleMatchService.RoleMatch::activityId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+
+        Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
+
+        String normalizedQuery = normalizeQuery(query);
+        Set<String> requiredTags = normalizeTags(tagNames);
+
+        List<ActivityEntity> ordered = new ArrayList<>();
+        for (ActivityRoleMatchService.RoleMatch match : matches) {
+            ActivityEntity activity = activityMap.get(match.activityId());
+            if (activity == null) {
+                continue;
+            }
+            if (!matchesPersonalizedFilters(activity, normalizedQuery, type, requiredTags, isCampus, status)) {
+                continue;
+            }
+            ordered.add(activity);
+        }
+
         int start = (int) pageable.getOffset();
-        int end = Math.min(start + pageable.getPageSize(), personalizedList.size());
-        List<ActivityEntity> pagedList = start < personalizedList.size() 
-                ? personalizedList.subList(start, end) 
+        int end = Math.min(start + pageable.getPageSize(), ordered.size());
+        List<ActivityEntity> pageContent = start < ordered.size()
+                ? ordered.subList(start, end)
                 : List.of();
-        
-        return new PageImpl<>(pagedList, pageable, personalizedList.size());
+
+        return new PageImpl<>(pageContent, pageable, ordered.size());
     }
     
     @Transactional
@@ -199,6 +154,7 @@ public class ActivityService {
 
         ActivityEntity savedActivity = activityRepository.save(activity);
         notificationService.createNewActivityNotification(savedActivity);
+        activityRoleMatchService.indexActivity(savedActivity);
         return savedActivity;
     }
     
@@ -211,13 +167,16 @@ public class ActivityService {
         return activityRepository.findById(id)
             .map(existingActivity -> {
                 applyUpsert(existingActivity, request);
-                return activityRepository.save(existingActivity);
+                ActivityEntity updated = activityRepository.save(existingActivity);
+                activityRoleMatchService.indexActivity(updated);
+                return updated;
             });
     }
     
     @Transactional
     public boolean deleteActivity(Long id) {
         if (activityRepository.existsById(id)) {
+            activityRoleMatchService.deleteActivityVector(id);
             activityRepository.deleteById(id);
             return true;
         }
@@ -265,6 +224,88 @@ public class ActivityService {
         activity.getAttachments().add(attachment);
         activityRepository.saveAndFlush(activity);
         return attachment;
+    }
+
+    private int determineFetchSize(Pageable pageable) {
+        int requested = (pageable.getPageNumber() + 1) * pageable.getPageSize() * 2;
+        int minimum = pageable.getPageSize();
+        int candidate = Math.max(requested, minimum);
+        return Math.min(candidate, MAX_ROLE_MATCH_FETCH);
+    }
+
+    private String normalizeQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return null;
+        }
+        return query.trim().toLowerCase();
+    }
+
+    private Set<String> normalizeTags(List<String> tagNames) {
+        if (tagNames == null || tagNames.isEmpty()) {
+            return Set.of();
+        }
+        return tagNames.stream()
+                .filter(name -> name != null && !name.isBlank())
+                .map(name -> name.trim().toLowerCase())
+                .collect(Collectors.toSet());
+    }
+
+    private boolean matchesPersonalizedFilters(
+            ActivityEntity activity,
+            String normalizedQuery,
+            ActivityType type,
+            Set<String> requiredTags,
+            Boolean isCampus,
+            ActivityStatus status) {
+
+        if (type != null && activity.getType() != type) {
+            return false;
+        }
+        if (status != null && activity.getStatus() != status) {
+            return false;
+        }
+        if (isCampus != null) {
+            boolean campus = Boolean.TRUE.equals(activity.getIsCampus());
+            if (!isCampus.equals(campus)) {
+                return false;
+            }
+        }
+        if (normalizedQuery != null && !matchesQuery(activity, normalizedQuery)) {
+            return false;
+        }
+        if (!requiredTags.isEmpty()) {
+            if (activity.getActivityTags() == null || activity.getActivityTags().isEmpty()) {
+                return false;
+            }
+            Set<String> activityTags = activity.getActivityTags().stream()
+                    .map(ActivityTagEntity::getTag)
+                    .filter(Objects::nonNull)
+                    .map(TagEntity::getName)
+                    .filter(Objects::nonNull)
+                    .map(name -> name.toLowerCase())
+                    .collect(Collectors.toSet());
+            boolean tagMatched = activityTags.stream().anyMatch(requiredTags::contains);
+            if (!tagMatched) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean matchesQuery(ActivityEntity activity, String normalizedQuery) {
+        if (normalizedQuery == null || normalizedQuery.isBlank()) {
+            return true;
+        }
+        String title = activity.getTitle() != null ? activity.getTitle().toLowerCase() : "";
+        if (title.contains(normalizedQuery)) {
+            return true;
+        }
+        String summary = activity.getSummary() != null ? activity.getSummary().toLowerCase() : "";
+        if (summary.contains(normalizedQuery)) {
+            return true;
+        }
+        String content = activity.getContent() != null ? activity.getContent().toLowerCase() : "";
+        return content.contains(normalizedQuery);
     }
 
     private void applyUpsert(ActivityEntity activity, ActivityUpsertRequest request) {
@@ -331,7 +372,17 @@ public class ActivityService {
                 .toList();
 
         if (!missing.isEmpty()) {
-            throw new IllegalArgumentException("존재하지 않는 태그입니다: " + String.join(", ", missing));
+            log.info("Create missing tags on the fly: {}", missing);
+            List<TagEntity> newTags = missing.stream()
+                    .map(name -> {
+                        TagEntity tag = new TagEntity();
+                        tag.setName(name);
+                        tag.setType(TagEntity.TagType.CATEGORY);
+                        return tag;
+                    })
+                    .toList();
+            List<TagEntity> saved = tagRepository.saveAll(newTags);
+            tags.addAll(saved);
         }
 
         for (TagEntity tag : tags) {
