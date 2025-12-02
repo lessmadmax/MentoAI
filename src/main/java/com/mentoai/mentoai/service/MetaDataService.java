@@ -3,6 +3,7 @@ package com.mentoai.mentoai.service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
@@ -30,12 +31,6 @@ public class MetaDataService {
     
     @Value("${api.careernet.key}")
     private String careerNetKey; 
-
-    @Value("${api.worknet.major.key}")
-    private String worknetMajorKey;     // 학과 정보 키
-
-    @Value("${api.worknet.job.key}")
-    private String worknetJobKey;       // 직업 정보 키
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -77,18 +72,26 @@ public class MetaDataService {
         return allStacks;
     }
 
-    // ==== [3] 자격증 (CSV 파일 파싱) ====
-    private List<String> cachedCertifications = new ArrayList<>();
+    // ==== [3] 자격증/학과/직업 (CSV 파일 파싱) ====
+    private final List<String> cachedCertifications = new ArrayList<>();
+    private final List<String> cachedMajors = new ArrayList<>();
+    private final List<String> cachedJobs = new ArrayList<>();
 
-    @PostConstruct // 서버 시작 시 자동 실행
-    public void loadCertificationsCsv() {
+    @PostConstruct
+    public void loadStaticMetadata() {
+        loadCertificationsCsv();
+        loadMajorsCsv();
+        loadJobsCsv();
+    }
+
+    private void loadCertificationsCsv() {
         try {
             ClassPathResource resource = new ClassPathResource("certifications.csv");
             BufferedReader reader = new BufferedReader(
                 new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)
             );
             
-            String header = reader.readLine(); // 헤더 스킵
+            reader.readLine(); // 헤더 스킵
 
             String line;
             while ((line = reader.readLine()) != null) {
@@ -127,47 +130,18 @@ public class MetaDataService {
 
     // ==== [4] 학과 정보 (고용24 API 사용) ====
     public List<String> getMajors() {
-        List<String> resultList = new ArrayList<>();
-        try {
-            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo213L01.do"
-                       + "?authKey=" + worknetMajorKey
-                       + "&returnType=XML"
-                       + "&callTp=L"
-                       + "&target=MAJORCD"
-                       + "&srchType=A"; 
-
-            String responseBody = restTemplate.getForObject(url, String.class);
-
-            // [XML 파싱] 헬퍼 메서드 사용
-            resultList = parseXmlAndGetValues(responseBody, "knowSchDptNm"); // 태그명: knowSchDptNm
-
-        } catch (Exception e) {
-            System.err.println("❌ 학과 API 호출 실패: " + e.getMessage());
-            return List.of("컴퓨터공학과", "소프트웨어학과", "경영학과", "전자공학과", "시각디자인학과", "기계공학과"); 
+        if (cachedMajors.isEmpty()) {
+            loadMajorsCsv();
         }
-        return resultList;
+        return List.copyOf(cachedMajors);
     }
 
     // ==== [5] 직업 목록 (고용24 API 사용) ====
     public List<String> getJobs() {
-        List<String> resultList = new ArrayList<>();
-        try {
-            String url = "https://www.work24.go.kr/cm/openApi/call/wk/callOpenApiSvcInfo212L01.do"
-                       + "?authKey=" + worknetJobKey
-                       + "&returnType=XML"
-                       + "&target=JOBCD";
-            
-            // 1. API 호출
-            String responseBody = restTemplate.getForObject(url, String.class);
-
-            // 2. XML 파싱 ('jobNm' 태그 추출)
-            resultList = parseXmlAndGetValues(responseBody, "jobNm");
-
-        } catch (Exception e) {
-            System.err.println("❌ 직업 API 호출 실패: " + e.getMessage());
-            return List.of("백엔드 개발자", "프론트엔드 개발자", "AI 엔지니어", "데이터 분석가", "풀스택 개발자", "PM(기획자)", "UI/UX 디자이너");
+        if (cachedJobs.isEmpty()) {
+            loadJobsCsv();
         }
-        return resultList;
+        return List.copyOf(cachedJobs);
     }
     
     // ==== [6] 학교 정보 (승인 대기중 -> Mock 반환) ====
@@ -176,11 +150,17 @@ public class MetaDataService {
         
         List<String> resultList = new ArrayList<>();
         try {
-            // [수정] 커리어넷 API 호출
-            String url = "https://www.career.go.kr/cnet/openapi/getOpenApi"
-                       + "?apiKey=" + careerNetKey
-                       + "&svcType=api&svcCode=SCHOOL&contentType=json&gubun=univ_list"
-                       + "&searchSchulNm=" + query; // 검색어 파라미터
+            String url = UriComponentsBuilder
+                .fromUriString("https://www.career.go.kr/cnet/openapi/getOpenApi")
+                .queryParam("apiKey", careerNetKey)
+                .queryParam("svcType", "api")
+                .queryParam("svcCode", "SCHOOL")
+                .queryParam("contentType", "json")
+                .queryParam("gubun", "univ_list")
+                .queryParam("searchSchulNm", query)
+                .build()
+                .encode()
+                .toUriString();
 
             String responseBody = restTemplate.getForObject(url, String.class);
 
@@ -202,31 +182,37 @@ public class MetaDataService {
         return resultList;
     }
 
-    // ================================================================================
-    // [Helper] XML 파싱 헬퍼 메서드 (고용24용)
-    // ================================================================================
-    private List<String> parseXmlAndGetValues(String xmlString, String tagName) {
-        List<String> values = new ArrayList<>();
+    private void loadMajorsCsv() {
+        cachedMajors.clear();
+        loadCsvColumn("majors.csv", 1, cachedMajors, "학과");
+    }
+
+    private void loadJobsCsv() {
+        cachedJobs.clear();
+        loadCsvColumn("jobs.csv", 3, cachedJobs, "직업");
+    }
+
+    private void loadCsvColumn(String fileName, int columnIndex, List<String> target, String label) {
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            // 문자열을 XML 문서로 변환
-            Document doc = builder.parse(new InputSource(new StringReader(xmlString)));
-            
-            // 특정 태그(tagName)를 가진 모든 요소를 찾음
-            NodeList nodeList = doc.getElementsByTagName(tagName);
-            for (int i = 0; i < nodeList.getLength(); i++) {
-                Node node = nodeList.item(i);
-                if (node.getNodeType() == Node.ELEMENT_NODE) {
-                    String value = node.getTextContent();
-                    if (value != null && !value.isBlank()) {
-                        values.add(value);
-                    }
+            ClassPathResource resource = new ClassPathResource(fileName);
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)
+            );
+
+            reader.readLine(); // 헤더 스킵
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                String[] parts = line.split(",", -1);
+                if (parts.length <= columnIndex) continue;
+                String value = parts[columnIndex].replace("\"", "").trim();
+                if (!value.isEmpty()) {
+                    target.add(value);
                 }
             }
+            System.out.println("✅ " + label + " CSV 로딩 완료: " + target.size() + "개");
         } catch (Exception e) {
-            System.err.println("XML 파싱 내부 에러: " + e.getMessage());
+            System.err.println("❌ " + label + " CSV 로딩 실패: " + e.getMessage());
         }
-        return values;
     }
 }
