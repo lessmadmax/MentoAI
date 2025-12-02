@@ -8,6 +8,7 @@ import com.mentoai.mentoai.controller.dto.RoleFitSimulationRequest;
 import com.mentoai.mentoai.controller.dto.RoleFitSimulationResponse;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
+import com.mentoai.mentoai.entity.ExperienceType;
 import com.mentoai.mentoai.entity.SkillLevel;
 import com.mentoai.mentoai.entity.TargetRoleEntity;
 import com.mentoai.mentoai.entity.UserEntity;
@@ -28,18 +29,21 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
 public class RoleFitService {
 
-    private static final double SKILL_WEIGHT = 0.50;
-    private static final double EDUCATION_WEIGHT = 0.35;
+    private static final double SKILL_WEIGHT = 0.45;
+    private static final double EXPERIENCE_WEIGHT = 0.20;
+    private static final double EDUCATION_WEIGHT = 0.25;
     private static final double EVIDENCE_WEIGHT = 0.10;
 
     private final UserRepository userRepository;
@@ -196,6 +200,112 @@ public class RoleFitService {
 
         // SkillFit = 0.7 * coverage + 0.3 * cosine
         return clamp(0.7 * coverage + 0.3 * cosine);
+    }
+
+    private double calculateExperienceFit(UserProfileEntity profile, TargetRoleEntity targetRole) {
+        if (profile == null || profile.getExperiences() == null || profile.getExperiences().isEmpty()) {
+            return 0.0;
+        }
+
+        String targetKeyword = resolveTargetKeyword(targetRole);
+        Set<String> targetSkills = extractTargetSkillNames(targetRole);
+
+        double bestScore = 0.0;
+        for (UserProfileExperienceEntity exp : profile.getExperiences()) {
+            double typeScore = mapExperienceTypeScore(exp.getType());
+            double roleScore = calculateRoleMatchScore(targetKeyword, exp.getRole());
+            double skillScore = calculateExperienceSkillOverlap(exp.getTechStack(), targetSkills);
+
+            double experienceScore = clamp(typeScore * 0.4 + roleScore * 0.3 + skillScore * 0.3);
+            if (Boolean.TRUE.equals(exp.getCurrent())) {
+                experienceScore = clamp(experienceScore + 0.05);
+            }
+            bestScore = Math.max(bestScore, experienceScore);
+        }
+
+        return bestScore;
+    }
+
+    private double mapExperienceTypeScore(ExperienceType type) {
+        if (type == null) {
+            return 0.5;
+        }
+        return switch (type) {
+            case PROJECT -> 0.9;
+            case INTERNSHIP -> 1.0;
+            case UNDERGRAD_RESEARCH -> 0.85;
+            case PARTTIME -> 0.65;
+            case OTHER -> 0.5;
+        };
+    }
+
+    private double calculateRoleMatchScore(String targetKeyword, String experienceRole) {
+        if (!StringUtils.hasText(targetKeyword)) {
+            return 0.5;
+        }
+        if (!StringUtils.hasText(experienceRole)) {
+            return 0.3;
+        }
+        String normalizedRole = experienceRole.toLowerCase(Locale.ROOT);
+        if (normalizedRole.contains(targetKeyword)) {
+            return 1.0;
+        }
+        String roleKeyword = extractRoleKeyword(normalizedRole);
+        if (StringUtils.hasText(roleKeyword) && roleKeyword.equals(targetKeyword)) {
+            return 0.8;
+        }
+        return 0.4;
+    }
+
+    private double calculateExperienceSkillOverlap(List<String> experienceSkills, Set<String> targetSkills) {
+        if ((experienceSkills == null || experienceSkills.isEmpty())) {
+            return targetSkills.isEmpty() ? 0.5 : 0.2;
+        }
+        if (targetSkills.isEmpty()) {
+            return 0.7;
+        }
+        long matches = experienceSkills.stream()
+                .filter(StringUtils::hasText)
+                .map(skill -> skill.toLowerCase(Locale.ROOT))
+                .filter(targetSkills::contains)
+                .count();
+        double denominator = Math.min(Math.max(targetSkills.size(), 1), Math.max(experienceSkills.size(), 1));
+        return clamp((double) matches / denominator);
+    }
+
+    private Set<String> extractTargetSkillNames(TargetRoleEntity targetRole) {
+        if (targetRole == null) {
+            return Collections.emptySet();
+        }
+        Set<String> targetSkills = new HashSet<>();
+        if (targetRole.getRequiredSkills() != null) {
+            for (WeightedSkill skill : targetRole.getRequiredSkills()) {
+                if (skill.getName() != null) {
+                    targetSkills.add(skill.getName().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        if (targetRole.getBonusSkills() != null) {
+            for (WeightedSkill skill : targetRole.getBonusSkills()) {
+                if (skill.getName() != null) {
+                    targetSkills.add(skill.getName().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return targetSkills;
+    }
+
+    private String resolveTargetKeyword(TargetRoleEntity targetRole) {
+        if (targetRole == null) {
+            return "general";
+        }
+        if (StringUtils.hasText(targetRole.getName())) {
+            return extractRoleKeyword(targetRole.getName().toLowerCase(Locale.ROOT));
+        }
+        if (StringUtils.hasText(targetRole.getRoleId())) {
+            return extractRoleKeyword(targetRole.getRoleId().toLowerCase(Locale.ROOT));
+        }
+        return "general";
     }
 
     private double skillLevelToNumber(SkillLevel level) {
@@ -448,11 +558,15 @@ public class RoleFitService {
                                                  String targetLabel) {
 
         double skillFit = calculateSkillFit(profile, targetRole);
+        double experienceFit = calculateExperienceFit(profile, targetRole);
         double educationFit = calculateEducationFit(profile, targetRole);
         double evidenceFit = calculateEvidenceFit(profile, targetRole);
 
         double roleFitScore = roundScore(
-                (SKILL_WEIGHT * skillFit + EDUCATION_WEIGHT * educationFit + EVIDENCE_WEIGHT * evidenceFit) * 100
+                (SKILL_WEIGHT * skillFit
+                        + EXPERIENCE_WEIGHT * experienceFit
+                        + EDUCATION_WEIGHT * educationFit
+                        + EVIDENCE_WEIGHT * evidenceFit) * 100
         );
         List<RoleFitResponse.MissingSkill> missingSkills = buildMissingSkills(profile, targetRole);
         List<String> recommendations = buildRecommendations(targetRole);
@@ -460,7 +574,7 @@ public class RoleFitService {
         return new RoleFitResponse(
                 targetLabel,
                 roleFitScore,
-                new RoleFitResponse.Breakdown(skillFit, 0.0, educationFit, evidenceFit),
+                new RoleFitResponse.Breakdown(skillFit, experienceFit, educationFit, evidenceFit),
                 missingSkills,
                 recommendations
         );

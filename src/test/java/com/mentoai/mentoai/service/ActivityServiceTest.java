@@ -36,6 +36,12 @@ class ActivityServiceTest {
     @Mock
     private NotificationService notificationService;
 
+    @Mock
+    private ActivityRoleMatchService activityRoleMatchService;
+
+    @Mock
+    private UserProfileService userProfileService;
+
     @InjectMocks
     private ActivityService activityService;
 
@@ -64,6 +70,7 @@ class ActivityServiceTest {
         when(activityRepository.save(any(ActivityEntity.class))).thenReturn(testActivity);
         when(notificationService.createNewActivityNotification(any(ActivityEntity.class)))
                 .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        doNothing().when(activityRoleMatchService).indexActivity(any(ActivityEntity.class));
 
         // When
         ActivityEntity result = activityService.createActivity(request);
@@ -146,6 +153,7 @@ class ActivityServiceTest {
 
         when(activityRepository.findById(1L)).thenReturn(Optional.of(testActivity));
         when(activityRepository.save(any(ActivityEntity.class))).thenReturn(testActivity);
+        doNothing().when(activityRoleMatchService).indexActivity(any(ActivityEntity.class));
 
         // When
         Optional<ActivityEntity> result = activityService.updateActivity(1L, updateRequest);
@@ -162,6 +170,7 @@ class ActivityServiceTest {
     void deleteActivity_Success() {
         // Given
         when(activityRepository.existsById(1L)).thenReturn(true);
+        doNothing().when(activityRoleMatchService).deleteActivityVector(1L);
         doNothing().when(activityRepository).deleteById(1L);
 
         // When

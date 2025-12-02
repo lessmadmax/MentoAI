@@ -21,6 +21,7 @@ import com.mentoai.mentoai.service.CalendarEventService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -57,6 +58,20 @@ public class RecommendService {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + userId);
         }
 
+        int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
+
+        if (!vectorSearchEnabled) {
+            Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "createdAt"));
+            ActivityType activityType = parseActivityType(type);
+            return activityRepository.findByFilters(
+                    null,
+                    activityType,
+                    campusOnly,
+                    null,
+                    pageable
+            ).getContent();
+        }
+
         UserProfileResponse profile = userProfileService.getProfile(userId);
         String targetRoleId = profile.targetRoleId();
         if (targetRoleId == null || targetRoleId.isBlank()) {
@@ -64,7 +79,6 @@ public class RecommendService {
             return List.of();
         }
 
-        int safeLimit = (limit == null || limit <= 0) ? 10 : limit;
         int fetchSize = Math.min(Math.max(safeLimit * 2, safeLimit), 200);
         List<ActivityRoleMatchService.RoleMatch> matches =
                 activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
