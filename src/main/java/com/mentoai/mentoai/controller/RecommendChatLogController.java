@@ -14,6 +14,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -50,7 +51,8 @@ public class RecommendChatLogController {
     @Operation(summary = "추천 대화 로그 상세 조회")
     public ResponseEntity<RecommendChatLogDetailResponse> getLog(
             @AuthenticationPrincipal UserPrincipal principal,
-            @PathVariable Long logId) {
+            @PathVariable Long logId,
+            @RequestParam(name = "includePayload", defaultValue = "false") boolean includePayload) {
         if (principal == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
@@ -61,8 +63,8 @@ public class RecommendChatLogController {
                         log.getUserQuery(),
                         log.getRagPrompt(),
                         log.getGeminiResponse(),
-                        recommendChatLogService.parseJson(log.getRequestPayload()),
-                        recommendChatLogService.parseJson(log.getResponsePayload()),
+                        includePayload ? recommendChatLogService.parseJson(log.getRequestPayload()) : null,
+                        includePayload ? recommendChatLogService.parseJson(log.getResponsePayload()) : null,
                         log.getModelName(),
                         log.getCreatedAt(),
                         log.getUpdatedAt()
