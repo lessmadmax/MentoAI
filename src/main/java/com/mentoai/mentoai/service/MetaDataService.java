@@ -15,7 +15,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class MetaDataService {
@@ -78,43 +80,128 @@ public class MetaDataService {
     }
 
     private void loadCertificationsCsv() {
+        cachedCertifications.clear();
+        Set<String> merged = new LinkedHashSet<>();
+
+        merged.addAll(readOfficialCertifications("certifications.csv"));
+        merged.addAll(readPrivateCertifications("private_certifications.csv"));
+
+        if (merged.isEmpty()) {
+            System.err.println("❌ 자격증 CSV 로딩 실패 (기본값 사용)");
+            cachedCertifications.addAll(Arrays.asList(
+                "정보처리기사",
+                "SQLD",
+                "ADsP",
+                "컴퓨터활용능력 1급",
+                "컴퓨터활용능력 2급",
+                "한국사능력검정시험",
+                "TOEIC",
+                "OPIC"
+            ));
+        } else {
+            cachedCertifications.addAll(merged);
+            Collections.sort(cachedCertifications, String.CASE_INSENSITIVE_ORDER);
+            System.out.println("✅ 자격증 데이터 로딩 완료: " + cachedCertifications.size() + "개");
+        }
+    }
+
+    private List<String> readOfficialCertifications(String fileName) {
+        List<String> items = new ArrayList<>();
         try {
-            ClassPathResource resource = new ClassPathResource("certifications.csv");
+            ClassPathResource resource = new ClassPathResource(fileName);
             BufferedReader reader = new BufferedReader(
                 new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)
             );
-            
+
             reader.readLine(); // 헤더 스킵
 
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.trim().isEmpty()) continue;
 
-                // CSV 구조: [0]코드, [1]구분명, [2]계열명, [3]종목명
-                String[] parts = line.split(",");
-
-                if (parts.length >= 4) {
-                    String certName = parts[3].trim();
-                    certName = certName.replace("\"", ""); 
-                    
+                List<String> parts = splitCsvLine(line);
+                if (parts.size() >= 4) {
+                    String certName = sanitize(parts.get(3));
                     if (!certName.isEmpty()) {
-                        cachedCertifications.add(certName);
+                        items.add(certName);
                     }
                 }
             }
-            System.out.println("✅ 자격증 데이터 로딩 완료: " + cachedCertifications.size() + "개");
-
         } catch (Exception e) {
-            System.err.println("❌ 자격증 CSV 로딩 실패 (기본값 사용): " + e.getMessage());
-            cachedCertifications.add("정보처리기사");
-            cachedCertifications.add("SQLD");
-            cachedCertifications.add("ADsP");
-            cachedCertifications.add("컴퓨터활용능력 1급");
-            cachedCertifications.add("컴퓨터활용능력 2급");
-            cachedCertifications.add("한국사능력검정시험");
-            cachedCertifications.add("TOEIC");
-            cachedCertifications.add("OPIC");
+            System.err.println("❌ 공식 자격증 CSV 로딩 실패: " + e.getMessage());
         }
+        return items;
+    }
+
+    private List<String> readPrivateCertifications(String fileName) {
+        List<String> items = new ArrayList<>();
+        try {
+            ClassPathResource resource = new ClassPathResource(fileName);
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)
+            );
+
+            reader.readLine(); // 헤더 스킵
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+
+                List<String> parts = splitCsvLine(line);
+                if (parts.size() < 6) continue;
+
+                String name = sanitize(parts.get(4));
+                if (name.isEmpty()) continue;
+
+                String gradeColumn = sanitize(parts.get(5));
+
+                if (gradeColumn.isBlank() || gradeColumn.contains("등급없음")) {
+                    items.add(name);
+                    continue;
+                }
+
+                String normalized = gradeColumn.replace("|", ",");
+                String[] gradeTokens = normalized.split(",");
+                for (String rawGrade : gradeTokens) {
+                    String grade = rawGrade.trim();
+                    if (grade.isEmpty() || grade.equalsIgnoreCase("등급없음")) continue;
+                    items.add(String.format("%s(%s)", name, grade));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("⚠️ 민간 자격증 CSV 로딩 실패: " + e.getMessage());
+        }
+        return items;
+    }
+
+    private String sanitize(String raw) {
+        return raw == null ? "" : raw.replace("\"", "").trim();
+    }
+
+    private List<String> splitCsvLine(String line) {
+        List<String> tokens = new ArrayList<>();
+        if (line == null) {
+            return tokens;
+        }
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (ch == ',' && !inQuotes) {
+                tokens.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(ch);
+            }
+        }
+        tokens.add(current.toString());
+        return tokens;
     }
 
     public List<String> getCertifications() {
@@ -209,3 +296,4 @@ public class MetaDataService {
         }
     }
 }
+
