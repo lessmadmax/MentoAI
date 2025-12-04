@@ -1,5 +1,6 @@
 package com.mentoai.mentoai.service;
 
+import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.entity.UserInterestEntity;
@@ -17,6 +18,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,6 +35,24 @@ class RecommendServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private GeminiService geminiService;
+
+    @Mock
+    private RoleFitService roleFitService;
+
+    @Mock
+    private UserProfileService userProfileService;
+
+    @Mock
+    private ActivityRoleMatchService activityRoleMatchService;
+
+    @Mock
+    private RecommendChatLogService recommendChatLogService;
+
+    @Mock
+    private CalendarEventService calendarEventService;
 
     @InjectMocks
     private RecommendService recommendService;
@@ -66,6 +86,8 @@ class RecommendServiceTest {
             .thenReturn(Arrays.asList(testInterest));
         
         Page<ActivityEntity> page = new PageImpl<>(Arrays.asList(testActivity));
+        when(activityRepository.findByFilters(any(), any(), any(), any(), any(Pageable.class)))
+            .thenReturn(page);
         when(activityRepository.findByFilters(any(), any(), any(), any(), any(Pageable.class)))
             .thenReturn(page);
 
@@ -160,7 +182,33 @@ class RecommendServiceTest {
             recommendService.getSimilarActivities(999L, 5);
         });
     }
+    private UserProfileResponse dummyProfile() {
+        return new UserProfileResponse(
+                1L,
+                "backend-engineer",
+                null,
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                Collections.emptyList(),
+                null
+        );
+    }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

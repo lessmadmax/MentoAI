@@ -51,6 +51,7 @@ public class UserProfileExperienceEntity {
     @CollectionTable(name = "user_profile_experience_skills", joinColumns = @JoinColumn(name = "exp_id"))
     @Column(name = "skill_name")
     private List<String> techStack = new ArrayList<>();
+
 }
 
 
