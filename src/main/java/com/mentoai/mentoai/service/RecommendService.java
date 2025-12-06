@@ -1002,6 +1002,7 @@ public class RecommendService {
         LocalDateTime endAt = resolveEndAt(activity, startAt);
         return new CalendarEventUpsertRequest(
                 CalendarEventType.ACTIVITY,
+                activity.getTitle(),
                 activity.getId(),
                 null,
                 recommendLogId,

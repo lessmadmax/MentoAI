@@ -159,6 +159,7 @@ public class RecommendController {
         try {
             CalendarEventUpsertRequest eventRequest = new CalendarEventUpsertRequest(
                     request.eventType(),
+                        request.eventTitle(),
                     request.activityId(),
                     request.jobPostingId(),
                     request.recommendLogId(),

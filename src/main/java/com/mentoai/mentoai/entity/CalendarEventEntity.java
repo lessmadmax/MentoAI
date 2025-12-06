@@ -27,6 +27,9 @@ public class CalendarEventEntity {
     @Column(name = "event_type")
     private CalendarEventType eventType = CalendarEventType.CUSTOM;
 
+    @Column(name = "event_title", length = 255)
+    private String eventTitle;
+
     @Column(name = "activity_id")
     private Long activityId;
 
