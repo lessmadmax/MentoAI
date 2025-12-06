@@ -1,23 +1,11 @@
 package com.mentoai.mentoai.service;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import org.springframework.core.io.ClassPathResource;
-import org.w3c.dom.Document;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
-import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -28,14 +16,6 @@ import java.util.Set;
 
 @Service
 public class MetaDataService {
-
-    // ==== [1] 설정 파일(application-local.properties)에서 키 가져오기 ====
-    
-    @Value("${api.careernet.key}")
-    private String careerNetKey; 
-
-    private final RestTemplate restTemplate = new RestTemplate();
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     // ==== [2] 기술 스택 (최대한 많이 포함) ====
     public List<String> getTechStacks() {
@@ -78,12 +58,14 @@ public class MetaDataService {
     private final List<String> cachedCertifications = new ArrayList<>();
     private final List<String> cachedMajors = new ArrayList<>();
     private final List<String> cachedJobs = new ArrayList<>();
+    private final List<String> cachedSchools = new ArrayList<>();
 
     @PostConstruct
     public void loadStaticMetadata() {
         loadCertificationsCsv();
         loadMajorsCsv();
         loadJobsCsv();
+        loadSchoolsCsv();
     }
 
     private void loadCertificationsCsv() {
@@ -215,6 +197,26 @@ public class MetaDataService {
         return cachedCertifications;
     }
 
+    public List<String> searchCertifications(String query) {
+        if (cachedCertifications.isEmpty()) {
+            loadCertificationsCsv();
+        }
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        String normalized = query.toLowerCase();
+        List<String> filtered = new ArrayList<>();
+        for (String cert : cachedCertifications) {
+            if (cert.toLowerCase().contains(normalized)) {
+                filtered.add(cert);
+            }
+            if (filtered.size() >= 50) {
+                break;
+            }
+        }
+        return filtered;
+    }
+
     // ==== [4] 학과 정보 (고용24 API 사용) ====
     public List<String> getMajors() {
         if (cachedMajors.isEmpty()) {
@@ -233,40 +235,24 @@ public class MetaDataService {
     
     // ==== [6] 학교 정보 (승인 대기중 -> Mock 반환) ====
     public List<String> getSchools(String query) {
-        if (query == null || query.isBlank()) return List.of();
-        
-        List<String> resultList = new ArrayList<>();
-        try {
-            String url = UriComponentsBuilder
-                .fromUriString("https://www.career.go.kr/cnet/openapi/getOpenApi")
-                .queryParam("apiKey", careerNetKey)
-                .queryParam("svcType", "api")
-                .queryParam("svcCode", "SCHOOL")
-                .queryParam("contentType", "json")
-                .queryParam("gubun", "univ_list")
-                .queryParam("searchSchulNm", query)
-                .build()
-                .encode()
-                .toUriString();
-
-            String responseBody = restTemplate.getForObject(url, String.class);
-
-            // [JSON 파싱] ObjectMapper 사용
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode contentNode = root.path("dataSearch").path("content");
-
-            if (contentNode.isArray()) {
-                for (JsonNode item : contentNode) {
-                    // 학교명 추출
-                    resultList.add(item.path("schoolName").asText());
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("❌ 학교 API 호출 실패: " + e.getMessage());
-            // 실패 시 빈 리스트 반환 (사용자는 검색 결과 없음으로 인지)
-            return List.of(); 
+        if (cachedSchools.isEmpty()) {
+            loadSchoolsCsv();
         }
-        return resultList;
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+
+        String normalized = query.toLowerCase();
+        List<String> filtered = new ArrayList<>();
+        for (String school : cachedSchools) {
+            if (school.toLowerCase().contains(normalized)) {
+                filtered.add(school);
+            }
+            if (filtered.size() >= 50) {
+                break;
+            }
+        }
+        return filtered;
     }
 
     private void loadMajorsCsv() {
@@ -277,6 +263,57 @@ public class MetaDataService {
     private void loadJobsCsv() {
         cachedJobs.clear();
         loadCsvColumn("jobs.csv", 3, cachedJobs, "직업");
+    }
+
+    private void loadSchoolsCsv() {
+        cachedSchools.clear();
+        Set<String> uniqueSchools = new LinkedHashSet<>();
+        try {
+            ClassPathResource resource = new ClassPathResource("universities.csv");
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8)
+            );
+
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                return;
+            }
+
+            List<String> headers = splitCsvLine(headerLine);
+            int schoolIdx = headers.indexOf("Column1.schoolName");
+            int campusIdx = headers.indexOf("Column1.campusName");
+
+            if (schoolIdx < 0) {
+                System.err.println("❌ 학교 CSV 헤더에 Column1.schoolName 이 없습니다.");
+                return;
+            }
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) continue;
+                List<String> parts = splitCsvLine(line);
+                if (parts.size() <= schoolIdx) continue;
+
+                String schoolName = sanitize(parts.get(schoolIdx));
+                if (schoolName.isEmpty()) continue;
+
+                String campusName = (campusIdx >= 0 && parts.size() > campusIdx)
+                        ? sanitize(parts.get(campusIdx))
+                        : "";
+
+                String formatted = campusName.isEmpty()
+                        ? schoolName
+                        : String.format("%s(%s)", schoolName, campusName);
+
+                uniqueSchools.add(formatted);
+            }
+
+            cachedSchools.addAll(uniqueSchools);
+            Collections.sort(cachedSchools, String.CASE_INSENSITIVE_ORDER);
+            System.out.println("✅ 학교 CSV 로딩 완료: " + cachedSchools.size() + "개");
+        } catch (Exception e) {
+            System.err.println("❌ 학교 CSV 로딩 실패: " + e.getMessage());
+        }
     }
 
     private void loadCsvColumn(String fileName, int columnIndex, List<String> target, String label) {

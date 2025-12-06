@@ -20,10 +20,13 @@ public class MetaDataController {
         return ResponseEntity.ok(metaDataService.getTechStacks());
     }
 
-    // 2. 자격증 (CSV + 기본값)
+    // 2. 자격증 (CSV + 검색)
     @GetMapping("/certifications")
-    public ResponseEntity<List<String>> getCertifications() {
-        return ResponseEntity.ok(metaDataService.getCertifications());
+    public ResponseEntity<List<String>> getCertifications(@RequestParam(required = false) String q) {
+        if (q == null || q.isBlank()) {
+            return ResponseEntity.ok(metaDataService.getCertifications());
+        }
+        return ResponseEntity.ok(metaDataService.searchCertifications(q));
     }
 
     // 3. 학교 (Mock 데이터)
