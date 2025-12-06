@@ -97,16 +97,21 @@ public class CalendarEventService {
 
     private void apply(CalendarEventEntity entity, CalendarEventUpsertRequest request) {
         entity.setEventType(request.eventType());
+        String resolvedTitle = null;
         if (request.eventType() == CalendarEventType.ACTIVITY) {
             entity.setActivityId(request.activityId());
             entity.setJobPostingId(null);
+            resolvedTitle = resolveActivityTitle(request.activityId(), request.eventTitle());
         } else if (request.eventType() == CalendarEventType.JOB_POSTING) {
             entity.setJobPostingId(request.jobPostingId());
             entity.setActivityId(null);
+            resolvedTitle = resolveJobPostingTitle(request.jobPostingId(), request.eventTitle());
         } else {
             entity.setActivityId(null);
             entity.setJobPostingId(null);
+            resolvedTitle = sanitizeTitle(request.eventTitle());
         }
+        entity.setEventTitle(StringUtils.hasText(resolvedTitle) ? resolvedTitle : defaultEventTitle(request.eventType()));
         entity.setRecommendLogId(request.recommendLogId());
         entity.setStartAt(request.startAt());
         entity.setEndAt(request.endAt());
@@ -142,7 +147,9 @@ public class CalendarEventService {
                 }
             }
             case CUSTOM -> {
-                // no-op
+                if (!StringUtils.hasText(request.eventTitle())) {
+                    throw new IllegalArgumentException("eventTitle is required for CUSTOM events");
+                }
             }
         }
 
@@ -183,6 +190,10 @@ public class CalendarEventService {
             }
         }
 
+        String eventTitle = StringUtils.hasText(entity.getEventTitle())
+                ? entity.getEventTitle()
+                : (activityTitle != null ? activityTitle : jobPostingTitle);
+
         return new CalendarEventResponse(
                 entity.getId(),
                 entity.getUserId(),
@@ -194,10 +205,48 @@ public class CalendarEventService {
                 entity.getEndAt(),
                 entity.getAlertMinutes(),
                 entity.getCreatedAt(),
+                eventTitle,
                 activityTitle,
                 jobPostingTitle,
                 jobPostingCompany
         );
+    }
+
+    private String resolveActivityTitle(Long activityId, String fallback) {
+        if (activityId == null) {
+            return sanitizeTitle(fallback);
+        }
+        return activityRepository.findById(activityId)
+                .map(activity -> sanitizeTitle(activity.getTitle()))
+                .orElseGet(() -> sanitizeTitle(fallback));
+    }
+
+    private String resolveJobPostingTitle(Long jobPostingId, String fallback) {
+        if (jobPostingId == null) {
+            return sanitizeTitle(fallback);
+        }
+        return jobPostingRepository.findById(jobPostingId)
+                .map(job -> {
+                    String company = sanitizeTitle(job.getCompanyName());
+                    String title = sanitizeTitle(job.getTitle());
+                    if (StringUtils.hasText(company) && StringUtils.hasText(title)) {
+                        return company + " - " + title;
+                    }
+                    return StringUtils.hasText(company) ? company : title;
+                })
+                .orElseGet(() -> sanitizeTitle(fallback));
+    }
+
+    private String sanitizeTitle(String source) {
+        return StringUtils.hasText(source) ? source.trim() : null;
+    }
+
+    private String defaultEventTitle(CalendarEventType eventType) {
+        return switch (eventType) {
+            case ACTIVITY -> "추천 활동";
+            case JOB_POSTING -> "채용 일정";
+            case CUSTOM -> "사용자 일정";
+        };
     }
 
     private LocalDateTime parseBoundary(String date, boolean isStart) {

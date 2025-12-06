@@ -78,10 +78,10 @@ VALUES
 
 -- 캘린더 이벤트
 INSERT INTO calendar_events (event_id, user_id, event_type, activity_id, job_posting_id, recommend_log_id,
-                             start_at, end_at, alert_minutes, created_at)
+                             start_at, end_at, alert_minutes, event_title, created_at)
 VALUES
-    (1, 1, 'ACTIVITY', 100, NULL, NULL, TIMESTAMP '2024-11-10 09:00:00', TIMESTAMP '2024-11-10 20:00:00', 30, CURRENT_TIMESTAMP),
-    (2, 1, 'JOB_POSTING', NULL, 500, NULL, TIMESTAMP '2024-12-15 10:00:00', TIMESTAMP '2024-12-15 11:00:00', 60, CURRENT_TIMESTAMP),
-    (3, 1, 'CUSTOM', NULL, NULL, NULL, TIMESTAMP '2024-11-20 19:00:00', TIMESTAMP '2024-11-20 20:00:00', 15, CURRENT_TIMESTAMP);
+    (1, 1, 'ACTIVITY', 100, NULL, NULL, TIMESTAMP '2024-11-10 09:00:00', TIMESTAMP '2024-11-10 20:00:00', 30, '클라우드 네이티브 해커톤', CURRENT_TIMESTAMP),
+    (2, 1, 'JOB_POSTING', NULL, 500, NULL, TIMESTAMP '2024-12-15 10:00:00', TIMESTAMP '2024-12-15 11:00:00', 60, 'MentoAI - 주니어 백엔드 엔지니어', CURRENT_TIMESTAMP),
+    (3, 1, 'CUSTOM', NULL, NULL, NULL, TIMESTAMP '2024-11-20 19:00:00', TIMESTAMP '2024-11-20 20:00:00', 15, '사용자 일정', CURRENT_TIMESTAMP);
 
 
