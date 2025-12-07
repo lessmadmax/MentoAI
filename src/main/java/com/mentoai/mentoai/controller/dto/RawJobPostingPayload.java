@@ -6,9 +6,10 @@ package com.mentoai.mentoai.controller.dto;
 public record RawJobPostingPayload(
         String title,
         String company,
+        String link,
+        String crawledAt,
         String etc,
-        String imgUrl,
-        String link
+        String imgUrl
 ) {
 }
 

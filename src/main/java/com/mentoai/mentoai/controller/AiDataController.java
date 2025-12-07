@@ -11,6 +11,7 @@ import com.mentoai.mentoai.controller.mapper.JobPostingMapper;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
+import com.mentoai.mentoai.security.AiApiKeyGuard;
 import com.mentoai.mentoai.service.CalendarEventService;
 import com.mentoai.mentoai.service.JobFitScoreService;
 import com.mentoai.mentoai.service.JobPostingService;
@@ -21,7 +22,6 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -37,7 +37,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -55,9 +54,7 @@ public class AiDataController {
     private final JobFitScoreService jobFitScoreService;
     private final RoleFitService roleFitService;
     private final UserProfileService userProfileService;
-
-    @Value("${application.ai.api-key:}")
-    private String aiApiKey;
+    private final AiApiKeyGuard aiApiKeyGuard;
 
     @GetMapping("/calendar-events")
     @Operation(summary = "AI용 사용자 캘린더 이벤트 조회")
@@ -67,7 +64,7 @@ public class AiDataController {
             @RequestParam(required = false) String startDate,
             @RequestParam(required = false) String endDate
     ) {
-        verifyApiKey(apiKey);
+        aiApiKeyGuard.verify(apiKey);
         List<CalendarEventResponse> responses = calendarEventService.getCalendarEvents(userId, startDate, endDate)
                 .stream()
                 .map(calendarEventService::toResponse)
@@ -85,7 +82,7 @@ public class AiDataController {
             @RequestParam(required = false) Boolean campusOnly,
             @RequestParam(required = false, defaultValue = "50") Integer limit
     ) {
-        verifyApiKey(apiKey);
+        aiApiKeyGuard.verify(apiKey);
         int safeLimit = Math.min(Math.max(limit, 1), MAX_PAGE_SIZE);
         ActivityType activityType = parseActivityType(type);
         ActivityStatus activityStatus = parseActivityStatus(status);
@@ -116,7 +113,7 @@ public class AiDataController {
             @RequestParam(required = false) String targetRoleId,
             @RequestParam(required = false, defaultValue = "50") Integer limit
     ) {
-        verifyApiKey(apiKey);
+        aiApiKeyGuard.verify(apiKey);
         int safeLimit = Math.min(Math.max(limit, 1), MAX_PAGE_SIZE);
         Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "createdAt"));
 
@@ -143,7 +140,7 @@ public class AiDataController {
             @RequestHeader(value = "X-AI-API-KEY", required = false) String apiKey,
             @RequestParam Long userId
     ) {
-        verifyApiKey(apiKey);
+        aiApiKeyGuard.verify(apiKey);
         List<JobFitScoreResponse> responses = jobFitScoreService.getJobFitScores(userId);
         return ResponseEntity.ok(responses);
     }
@@ -155,7 +152,7 @@ public class AiDataController {
             @RequestParam Long userId,
             @RequestParam(required = false) String targetRoleId
     ) {
-        verifyApiKey(apiKey);
+        aiApiKeyGuard.verify(apiKey);
         String resolvedTargetRole = StringUtils.hasText(targetRoleId)
                 ? targetRoleId
                 : userProfileService.getProfile(userId).targetRoleId();
@@ -169,15 +166,6 @@ public class AiDataController {
                 new RoleFitRequest(resolvedTargetRole, null)
         );
         return ResponseEntity.ok(response);
-    }
-
-    private void verifyApiKey(String providedKey) {
-        if (!StringUtils.hasText(aiApiKey)) {
-            return;
-        }
-        if (!StringUtils.hasText(providedKey) || !Objects.equals(aiApiKey, providedKey)) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid AI API key");
-        }
     }
 
     private ActivityType parseActivityType(String value) {

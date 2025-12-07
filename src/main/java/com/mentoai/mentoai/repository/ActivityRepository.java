@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> {
@@ -52,6 +53,10 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, Long> 
     boolean existsByUrl(String url);
     
     boolean existsByTitle(String title);
+
+    Optional<ActivityEntity> findFirstByUrl(String url);
+
+    Optional<ActivityEntity> findFirstByTitleIgnoreCase(String title);
 
     default Page<ActivityEntity> findByFilters(
             String query,

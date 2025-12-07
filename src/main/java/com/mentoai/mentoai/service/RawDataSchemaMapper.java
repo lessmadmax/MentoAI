@@ -13,6 +13,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -71,6 +73,7 @@ public class RawDataSchemaMapper {
 
         WorkPlaceCareer parsed = parseEtc(raw.etc());
         String description = buildJobDescription(raw);
+        OffsetDateTime registeredAt = parseCrawledAt(raw.crawledAt());
 
         return new JobPostingUpsertRequest(
                 companyName,
@@ -86,7 +89,7 @@ public class RawDataSchemaMapper {
                 null, // benefits
                 raw.link(),
                 null, // deadline
-                null, // registeredAt
+                registeredAt,
                 Collections.emptyList(),
                 Collections.emptyList()
         );
@@ -201,6 +204,9 @@ public class RawDataSchemaMapper {
         if (StringUtils.hasText(raw.etc())) {
             lines.add("기타 정보: " + raw.etc().trim());
         }
+        if (StringUtils.hasText(raw.crawledAt())) {
+            lines.add("수집 일시: " + raw.crawledAt().trim());
+        }
         return lines.isEmpty() ? null : String.join("\n", lines);
     }
 
@@ -209,6 +215,24 @@ public class RawDataSchemaMapper {
             throw new IllegalArgumentException(label + "이(가) 필요합니다.");
         }
         return value.trim();
+    }
+
+    private OffsetDateTime parseCrawledAt(String crawledAt) {
+        if (!StringUtils.hasText(crawledAt)) {
+            return null;
+        }
+        String trimmed = crawledAt.trim();
+        try {
+            LocalDate date = LocalDate.parse(trimmed, ISO_DATE);
+            return date.atStartOfDay().atOffset(ZoneOffset.UTC);
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            LocalDateTime dateTime = LocalDateTime.parse(trimmed);
+            return dateTime.atOffset(ZoneOffset.UTC);
+        } catch (DateTimeParseException ex) {
+            return null;
+        }
     }
 
     private record WorkPlaceCareer(String workPlace, String careerLevel) {
