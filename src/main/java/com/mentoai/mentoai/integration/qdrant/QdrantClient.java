@@ -36,15 +36,20 @@ public class QdrantClient {
      * 활동 임베딩을 Qdrant 컬렉션에 업서트합니다.
      */
     public void upsertActivityVectors(List<ActivityVectorPayload> payloads) {
+        upsertVectors(payloads, properties.getCollection(), properties.getVectorDim());
+    }
+
+    public void upsertVectors(List<ActivityVectorPayload> payloads,
+                              String collection,
+                              Integer expectedDim) {
         if (CollectionUtils.isEmpty(payloads)) {
             return;
         }
 
-        ensureCollectionConfigured();
+        String resolvedCollection = resolveCollection(collection);
+        ensureCollectionConfigured(resolvedCollection);
 
-        Integer expectedDim = properties.getVectorDim();
-
-        String endpoint = collectionUrl("/points?wait=true");
+        String endpoint = collectionUrl(resolvedCollection, "/points?wait=true");
         Map<String, Object> body = Map.of(
                 "points", payloads.stream()
                         .map(payload -> toPointRequest(payload, expectedDim))
@@ -62,9 +67,19 @@ public class QdrantClient {
             int topK,
             Map<String, Object> filter
     ) {
-        ensureCollectionConfigured();
+        return searchByEmbedding(embedding, topK, filter, properties.getCollection());
+    }
 
-        String endpoint = collectionUrl("/points/search");
+    public List<QdrantSearchResult> searchByEmbedding(
+            List<Double> embedding,
+            int topK,
+            Map<String, Object> filter,
+            String collection
+    ) {
+        String resolvedCollection = resolveCollection(collection);
+        ensureCollectionConfigured(resolvedCollection);
+
+        String endpoint = collectionUrl(resolvedCollection, "/points/search");
         Map<String, Object> body = new HashMap<>();
         body.put("vector", embedding);
         body.put("top", topK);
@@ -98,12 +113,17 @@ public class QdrantClient {
      * 포인트 ID로 Qdrant 데이터 삭제.
      */
     public void deletePoint(String pointId) {
+        deletePoint(pointId, properties.getCollection());
+    }
+
+    public void deletePoint(String pointId, String collection) {
         if (pointId == null || pointId.isBlank()) {
             return;
         }
-        ensureCollectionConfigured();
+        String resolvedCollection = resolveCollection(collection);
+        ensureCollectionConfigured(resolvedCollection);
 
-        String endpoint = collectionUrl("/points/delete?wait=true");
+        String endpoint = collectionUrl(resolvedCollection, "/points/delete?wait=true");
         Map<String, Object> body = Map.of("points", List.of(pointId));
         execute(endpoint, HttpMethod.POST, body);
     }
@@ -155,15 +175,21 @@ public class QdrantClient {
         return headers;
     }
 
-    private String collectionUrl(String suffix) {
+    private String collectionUrl(String collection, String suffix) {
         String base = Objects.requireNonNull(properties.getUrl(), "qdrant.url is required").replaceAll("/$", "");
-        String collection = Objects.requireNonNull(properties.getCollection(), "qdrant.collection is required");
         return base + "/collections/" + collection + suffix;
     }
 
-    private void ensureCollectionConfigured() {
+    private void ensureCollectionConfigured(String collection) {
         Objects.requireNonNull(properties.getUrl(), "qdrant.url is required");
-        Objects.requireNonNull(properties.getCollection(), "qdrant.collection is required");
+        Objects.requireNonNull(collection, "qdrant.collection is required");
+    }
+
+    private String resolveCollection(String override) {
+        if (override != null && !override.isBlank()) {
+            return override;
+        }
+        return Objects.requireNonNull(properties.getCollection(), "qdrant.collection is required");
     }
 
     /**

@@ -28,6 +28,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 
 @Slf4j
@@ -128,6 +129,44 @@ public class JobFitScoreService {
         return Optional.of(
                 toResponse(entity, jobPosting, missingSkills, recommendations, improvements, requirements, true)
         );
+    }
+
+    public List<JobFitScoreResponse> getJobFitScores(Long userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId는 필수입니다.");
+        }
+        List<JobFitScoreEntity> entities = jobFitScoreRepository.findByUserId(userId);
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+        return entities.stream()
+                .map(this::toCachedResponse)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private JobFitScoreResponse toCachedResponse(JobFitScoreEntity entity) {
+        JobPostingEntity jobPosting = jobPostingService.getJobPosting(entity.getJobId()).orElse(null);
+        if (jobPosting == null) {
+            return null;
+        }
+        List<RoleFitResponse.MissingSkill> missingSkills = readJson(
+                entity.getMissingSkillsJson(),
+                MISSING_SKILL_TYPE,
+                Collections.emptyList()
+        );
+        List<String> recommendations = readJson(
+                entity.getRecommendationsJson(),
+                STRING_LIST_TYPE,
+                Collections.emptyList()
+        );
+        List<ImprovementItem> improvements = readJson(
+                entity.getImprovementsJson(),
+                IMPROVEMENT_TYPE,
+                Collections.emptyList()
+        );
+        JobRequirementPayload requirements = readRequirements(entity.getRequirementsJson());
+        return toResponse(entity, jobPosting, missingSkills, recommendations, improvements, requirements, true);
     }
 
     private JobRequirementPayload fallbackRequirements(JobPostingEntity jobPosting) {

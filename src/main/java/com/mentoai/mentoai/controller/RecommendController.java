@@ -3,6 +3,8 @@ package com.mentoai.mentoai.controller;
 import com.mentoai.mentoai.controller.dto.ActivityRecommendationResponse;
 import com.mentoai.mentoai.controller.dto.RecommendRequest;
 import com.mentoai.mentoai.controller.dto.RecommendResponse;
+import com.mentoai.mentoai.controller.dto.JobRecommendRequest;
+import com.mentoai.mentoai.controller.dto.JobRecommendResponse;
 import com.mentoai.mentoai.controller.dto.CalendarEventResponse;
 import com.mentoai.mentoai.controller.dto.CalendarEventUpsertRequest;
 import com.mentoai.mentoai.controller.dto.RecommendCalendarRequest;
@@ -10,6 +12,7 @@ import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.CalendarEventEntity;
 import com.mentoai.mentoai.service.RecommendService;
 import com.mentoai.mentoai.service.CalendarEventService;
+import com.mentoai.mentoai.service.JobRecommendationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,6 +37,7 @@ public class RecommendController {
 
     private final RecommendService recommendService;
     private final CalendarEventService calendarEventService;
+    private final JobRecommendationService jobRecommendationService;
 
    /* @PostMapping
     @Operation(summary = "RAG 기반 맞춤 추천", description = "사용자 프로필/관심 태그/자연어 질의를 입력받아 활동 추천을 반환합니다.")
@@ -68,6 +72,23 @@ public class RecommendController {
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
             log.error("[/recommend] Internal server error userId={}: {}", request.userId(), e.getMessage(), e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping("/jobs")
+    @Operation(summary = "사용자 맞춤 공고 추천", description = "벡터 검색을 이용해 사용자 프로필과 유사한 채용 공고를 추천합니다.")
+    public ResponseEntity<JobRecommendResponse> recommendJobs(
+            @Valid @RequestBody JobRecommendRequest request) {
+        log.info("[/recommend/jobs] Request received userId={}, limit={}", request.userId(), request.limit());
+        try {
+            JobRecommendResponse response = jobRecommendationService.recommend(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            log.warn("[/recommend/jobs] Invalid request userId={}: {}", request.userId(), e.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("[/recommend/jobs] Internal server error userId={}: {}", request.userId(), e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }

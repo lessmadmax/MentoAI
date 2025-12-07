@@ -20,14 +20,24 @@ public class QdrantProperties {
     private String apiKey;
 
     /**
-     * 사용할 컬렉션 이름.
+     * 활동向 기본 컬렉션 이름.
      */
     private String collection;
 
     /**
-     * 벡터 차원 수 (기본 768).
+     * 활동向 벡터 차원 수 (기본 768).
      */
     private Integer vectorDim = 768;
+
+    /**
+     * 채용 공고용 별도 컬렉션 이름 (지정되지 않으면 기본 컬렉션 사용).
+     */
+    private String jobCollection;
+
+    /**
+     * 채용 공고 벡터 차원 수 (지정되지 않으면 기본 차원 사용).
+     */
+    private Integer jobVectorDim;
 
     /**
      * REST 호출 타임아웃(ms).
