@@ -531,6 +531,8 @@ public class RecommendService {
             log.warn("No personalized activities found for user {}", request.userId());
             return new RecommendResponse(List.of());
         }
+        log.info("[recommend] candidates retrieved size={} topK={}", candidateActivities.size(), request.getTopKOrDefault());
+        debugCandidateTitles("retrieved", candidateActivities);
         
         // 3. Gemini에 RAG 프롬프트 구성 및 전송
         String prompt = buildRAGPrompt(request, userProfile, candidateActivities);
@@ -562,6 +564,7 @@ public class RecommendService {
             finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities, currentRoleFitScore);
             geminiResponse = "FALLBACK_USED: " + e.getMessage();
         }
+        log.info("[recommend] final items size={} (after LLM/fallback)", finalResponse.items().size());
 
         recommendChatLogService.completeLog(
                 chatLog.getId(),
@@ -583,6 +586,7 @@ public class RecommendService {
             int limit) {
 
         RecommendIntent intent = inferIntent(request);
+        log.info("[recommend] intent={} query='{}' vectorEnabled={}", intent.normalizedIntent(), request.query(), vectorSearchEnabled);
 
         if (!vectorSearchEnabled) {
             log.debug("Vector search disabled; using intent-aware fallback.");
@@ -611,13 +615,16 @@ public class RecommendService {
         Map<Long, ActivityEntity> activityMap = activityRepository.findAllById(ids).stream()
                 .collect(Collectors.toMap(ActivityEntity::getId, Function.identity()));
 
-        return matches.stream()
+        List<ActivityEntity> result = matches.stream()
                 .map(match -> activityMap.get(match.activityId()))
                 .filter(Objects::nonNull)
                 .filter(activity -> matchesIntentFilters(activity, intent))
                 .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(limit)
                 .collect(Collectors.toList());
+        log.info("[recommend] vector candidates={} after filters intent={} query='{}'", result.size(), intent.normalizedIntent(), request.query());
+        debugCandidateTitles("vector", result);
+        return result;
     }
 
     private List<ActivityEntity> fallbackActivities(RecommendRequest request, int limit, RecommendIntent intent) {
@@ -638,6 +645,8 @@ public class RecommendService {
                 .filter(activity -> matchesRequestFilters(activity, request, false))
                 .limit(safeLimit)
                 .collect(Collectors.toList());
+        log.info("[recommend] fallback candidates={} filtered={}", candidates.size(), filtered.size());
+        debugCandidateTitles("fallback", filtered);
 
         if (filtered.isEmpty()) {
             log.info("No activities matched intent {} and query '{}'. Falling back to recent activities.",
@@ -656,6 +665,8 @@ public class RecommendService {
                     .filter(activity -> matchesRequestFilters(activity, request, true))
                     .limit(safeLimit)
                     .collect(Collectors.toList());
+            log.info("[recommend] fallback(second) candidates={} filtered={}", candidates.size(), filtered.size());
+            debugCandidateTitles("fallback-2", filtered);
         }
 
         return filtered;
@@ -992,6 +1003,17 @@ public class RecommendService {
                 log.debug("Skip auto calendar add for user {} activity {}: {}", userId, item.activity().activityId(), e.getMessage());
             }
         }
+    }
+
+    private void debugCandidateTitles(String stage, List<ActivityEntity> activities) {
+        if (!log.isInfoEnabled()) {
+            return;
+        }
+        List<String> titles = activities.stream()
+                .limit(10)
+                .map(a -> a.getId() + ":" + a.getTitle())
+                .toList();
+        log.info("[recommend][{}] sample titles (up to 10): {}", stage, titles);
     }
 
     private CalendarEventUpsertRequest buildCalendarEventRequest(ActivityEntity activity, Long recommendLogId) {
