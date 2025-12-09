@@ -67,7 +67,7 @@ public class QdrantClient {
             int topK,
             Map<String, Object> filter
     ) {
-        return searchByEmbedding(embedding, topK, filter, properties.getCollection());
+        return searchByEmbedding(embedding, topK, filter, properties.resolvedActivityCollection());
     }
 
     public List<QdrantSearchResult> searchByEmbedding(
@@ -106,6 +106,29 @@ public class QdrantClient {
                         res.score() != null ? res.score() : 0.0,
                         res.payload() != null ? res.payload() : Collections.emptyMap()
                 ))
+                .toList();
+    }
+
+    /**
+     * 여러 컬렉션에 대해 검색 후 점수순으로 합칩니다.
+     */
+    public List<QdrantSearchResult> searchAcrossCollections(
+            List<Double> embedding,
+            int topK,
+            Map<String, Object> filter,
+            List<String> collections
+    ) {
+        if (collections == null || collections.isEmpty()) {
+            return searchByEmbedding(embedding, topK, filter);
+        }
+        List<QdrantSearchResult> all = new java.util.ArrayList<>();
+        for (String col : collections) {
+            List<QdrantSearchResult> part = searchByEmbedding(embedding, topK, filter, col);
+            all.addAll(part);
+        }
+        return all.stream()
+                .sorted((a, b) -> Double.compare(b.score(), a.score()))
+                .limit(topK)
                 .toList();
     }
 
@@ -189,7 +212,7 @@ public class QdrantClient {
         if (override != null && !override.isBlank()) {
             return override;
         }
-        return Objects.requireNonNull(properties.getCollection(), "qdrant.collection is required");
+        return Objects.requireNonNull(properties.resolvedActivityCollection(), "qdrant.collection is required");
     }
 
     /**
