@@ -239,7 +239,7 @@ public class MetaDataService {
             loadSchoolsCsv();
         }
         if (query == null || query.isBlank()) {
-            return List.of();
+            return List.copyOf(cachedSchools);
         }
 
         String normalized = query.toLowerCase();
