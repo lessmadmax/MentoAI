@@ -14,6 +14,8 @@ import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.JobPostingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -38,6 +40,9 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Slf4j
 public class S3DataIngestionService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private final S3Client s3Client;
     private final AwsS3IngestionProperties properties;
@@ -99,6 +104,9 @@ public class S3DataIngestionService {
                 } catch (Exception e) {
                     stats.incrementFailed();
                     log.warn("Failed to ingest activity from key {}: {}", object.key(), e.getMessage());
+                } finally {
+                    // 한 payload 처리 후 영속성 컨텍스트를 비워 캐스케이드 잔존 엔티티로 인한 rollback-only를 방지
+                    flushAndClear();
                 }
             }
         }
@@ -129,6 +137,8 @@ public class S3DataIngestionService {
                 } catch (Exception e) {
                     stats.incrementFailed();
                     log.warn("Failed to ingest job posting from key {}: {}", object.key(), e.getMessage());
+                } finally {
+                    flushAndClear();
                 }
             }
         }
@@ -239,6 +249,15 @@ public class S3DataIngestionService {
         }
         if (!StringUtils.hasText(properties.getBucket())) {
             throw new IllegalStateException("aws.s3.ingest.bucket is not configured.");
+        }
+    }
+
+    private void flushAndClear() {
+        try {
+            entityManager.flush();
+            entityManager.clear();
+        } catch (Exception ignored) {
+            // flush/clear 실패는 무시하고 다음 payload 처리
         }
     }
 
