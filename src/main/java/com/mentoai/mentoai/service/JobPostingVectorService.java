@@ -79,14 +79,14 @@ public class JobPostingVectorService {
     }
 
     public List<QdrantSearchResult> search(List<Double> embedding, int topK) {
-        String collection = jobCollectionName();
-        if (collection == null || CollectionUtils.isEmpty(embedding)) {
+        List<String> collections = qdrantProperties.jobCollections();
+        if (collections.isEmpty() || CollectionUtils.isEmpty(embedding)) {
             return List.of();
         }
 
         int safeTopK = Math.max(1, Math.min(topK, 500));
         try {
-            return qdrantClient.searchByEmbedding(embedding, safeTopK, null, collection);
+            return qdrantClient.searchAcrossCollections(embedding, safeTopK, null, collections);
         } catch (Exception e) {
             log.warn("Job posting vector search failed: {}", e.getMessage());
             return List.of();
@@ -190,10 +190,7 @@ public class JobPostingVectorService {
     }
 
     private String jobCollectionName() {
-        if (StringUtils.hasText(qdrantProperties.getJobCollection())) {
-            return qdrantProperties.getJobCollection();
-        }
-        return qdrantProperties.getCollection();
+        return qdrantProperties.resolvedJobCollection();
     }
 
     private Integer jobVectorDimension() {

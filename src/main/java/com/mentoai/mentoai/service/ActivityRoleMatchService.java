@@ -36,6 +36,7 @@ public class ActivityRoleMatchService {
 
     private final GeminiService geminiService;
     private final QdrantClient qdrantClient;
+    private final com.mentoai.mentoai.config.QdrantProperties qdrantProperties;
     private final ActivityTargetRoleRepository activityTargetRoleRepository;
     private final TargetRoleRepository targetRoleRepository;
     private final ActivityRepository activityRepository;
@@ -182,7 +183,12 @@ public class ActivityRoleMatchService {
         int safeTopK = clampTopK(topK);
         try {
             List<Double> roleEmbedding = geminiService.generateEmbedding(roleDocument);
-            return qdrantClient.searchByEmbedding(roleEmbedding, safeTopK, null);
+            return qdrantClient.searchAcrossCollections(
+                    roleEmbedding,
+                    safeTopK,
+                    null,
+                    qdrantProperties.activityCollections()
+            );
         } catch (Exception e) {
             log.warn("Failed to retrieve Qdrant matches for role {}: {}", role.getRoleId(), e.getMessage());
             return List.of();
