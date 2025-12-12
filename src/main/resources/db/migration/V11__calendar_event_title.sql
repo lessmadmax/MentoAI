@@ -22,3 +22,12 @@ SET event_title = '사용자 일정'
 WHERE (event_title IS NULL OR TRIM(event_title) = '')
   AND (event_type IS NULL OR event_type = 'CUSTOM');
 
+-- target_role_keywords 테이블 추가 및 유니크 인덱스
+CREATE TABLE IF NOT EXISTS target_role_keywords (
+    role_id TEXT NOT NULL REFERENCES target_roles(role_id) ON DELETE CASCADE,
+    keyword TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_target_role_keyword_unique
+    ON target_role_keywords(role_id, keyword);
+

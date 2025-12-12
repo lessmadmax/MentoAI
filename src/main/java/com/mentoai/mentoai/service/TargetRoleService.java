@@ -59,6 +59,11 @@ public class TargetRoleService {
             entity.getRecommendedCerts().addAll(request.recommendedCerts());
         }
 
+        entity.getKeywords().clear();
+        if (request.keywords() != null) {
+            entity.getKeywords().addAll(request.keywords());
+        }
+
         TargetRoleEntity saved = targetRoleRepository.save(entity);
         return toResponse(saved);
     }
@@ -95,6 +100,7 @@ public class TargetRoleService {
                 toMap(entity.getMajorMapping(), WeightedMajor::getMajor, WeightedMajor::getWeight),
                 entity.getExpectedSeniority(),
                 entity.getRecommendedCerts(),
+                entity.getKeywords(),
                 entity.getUpdatedAt()
         );
     }

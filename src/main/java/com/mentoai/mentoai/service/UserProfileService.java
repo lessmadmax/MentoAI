@@ -6,6 +6,7 @@ import com.mentoai.mentoai.controller.mapper.UserProfileMapper;
 import com.mentoai.mentoai.entity.UserEntity;
 import com.mentoai.mentoai.entity.UserProfileEntity;
 import com.mentoai.mentoai.repository.UserProfileRepository;
+import com.mentoai.mentoai.repository.TargetRoleRepository;
 import com.mentoai.mentoai.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -23,6 +25,7 @@ public class UserProfileService {
 
     private final UserProfileRepository userProfileRepository;
     private final UserRepository userRepository;
+    private final TargetRoleRepository targetRoleRepository;
     private final EntityManager entityManager;
 
     public UserProfileResponse getProfile(Long userId) {
@@ -99,7 +102,11 @@ public class UserProfileService {
             }
 
             // 이제 안전하게 수정 가능
+            // resolve targetRoleId using provided value or interestDomains -> role lookup
+            String resolvedTargetRoleId = resolveTargetRoleId(request);
+
             UserProfileMapper.apply(profile, request);
+            profile.setTargetRoleId(resolvedTargetRoleId);
             
             // 최종 저장 (기존 엔티티는 merge, 새 엔티티는 이미 persist됨)
             entityManager.flush(); // 변경사항 반영
@@ -114,6 +121,30 @@ public class UserProfileService {
             log.error("Error saving profile for user: {}", userId, e);
             throw e;
         }
+    }
+
+    private String resolveTargetRoleId(UserProfileUpsertRequest request) {
+        if (request.targetRoleId() != null && !request.targetRoleId().isBlank()) {
+            return request.targetRoleId().trim();
+        }
+        if (request.interestDomains() != null) {
+            Optional<String> candidate = request.interestDomains().stream()
+                    .filter(org.springframework.util.StringUtils::hasText)
+                    .map(String::trim)
+                    .findFirst();
+            if (candidate.isPresent()) {
+                String value = candidate.get();
+                // try as role_id
+                if (targetRoleRepository.findById(value).isPresent()) {
+                    return value;
+                }
+                // try by name match (ignore case)
+                return targetRoleRepository.findByNameIgnoreCase(value)
+                        .map(com.mentoai.mentoai.entity.TargetRoleEntity::getRoleId)
+                        .orElse(null);
+            }
+        }
+        return null;
     }
 
     @Transactional(readOnly = true)

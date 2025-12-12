@@ -48,7 +48,7 @@ public class RecommendService {
     private final RecommendChatLogService recommendChatLogService;
     private final CalendarEventService calendarEventService;
 
-    @Value("${recommendation.vector-search.enabled:false}")
+    @Value("${recommendation.vector-search.enabled:true}")
     private boolean vectorSearchEnabled;
     
     // 사용자 맞춤 활동 추천 (targetRole 기반)
@@ -528,8 +528,12 @@ public class RecommendService {
         );
 
         if (candidateActivities.isEmpty()) {
-            log.warn("No personalized activities found for user {}", request.userId());
-            return new RecommendResponse(List.of());
+            log.warn("No personalized activities found for user {}. Falling back to recent activities with no filters.", request.userId());
+            candidateActivities = fetchRecentActivities(request.getTopKOrDefault() * 3);
+            if (candidateActivities.isEmpty()) {
+                return new RecommendResponse(List.of());
+            }
+            debugCandidateTitles("recent-fallback", candidateActivities);
         }
         log.info("[recommend] candidates retrieved size={} topK={}", candidateActivities.size(), request.getTopKOrDefault());
         debugCandidateTitles("retrieved", candidateActivities);
@@ -549,6 +553,7 @@ public class RecommendService {
         RecommendResponse finalResponse;
         try {
             geminiResponse = geminiService.generateText(prompt);
+            log.debug("[recommend] raw Gemini response: {}", geminiResponse);
             // 4. Gemini 응답 파싱하여 구조화된 결과 반환
             List<RecommendResponse.RecommendItem> items = parseGeminiRecommendationResponse(
                     geminiResponse,
@@ -594,16 +599,35 @@ public class RecommendService {
         }
 
         String targetRoleId = userProfile.targetRoleId();
-        if (targetRoleId == null || targetRoleId.isBlank()) {
-            log.warn("User {} has no targetRoleId configured. Falling back to basic activity list.", userProfile.userId());
-            return fallbackActivities(request, limit, intent);
+        int fetchSize = Math.min(limit * 3, 200);
+
+        // 1) 하이브리드 검색: targetRole + profile + user query 결합
+        List<ActivityRoleMatchService.RoleMatch> matches = activityRoleMatchService.hybridSearch(
+                targetRoleId,
+                userProfile.userId(),
+                request.query(),
+                fetchSize
+        ).stream()
+                .map(result -> new ActivityRoleMatchService.RoleMatch(
+                        activityRoleMatchService.extractActivityId(result),
+                        result.score(),
+                        result.payload()
+                ))
+                .filter(m -> m.activityId() != null)
+                .toList();
+
+        // 2) targetRole만 (백업)
+        if (matches.isEmpty() && StringUtils.hasText(targetRoleId)) {
+            matches = activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
         }
 
-        int fetchSize = Math.min(limit * 3, 200);
-        List<ActivityRoleMatchService.RoleMatch> matches =
-                activityRoleMatchService.findRoleMatches(targetRoleId, fetchSize);
+        // 3) 프로필만 (백업)
         if (matches.isEmpty()) {
-            log.warn("No Qdrant matches for target role {}. Falling back to basic listing.", targetRoleId);
+            matches = activityRoleMatchService.findMatchesForUserProfile(userProfile.userId(), fetchSize);
+        }
+
+        if (matches.isEmpty()) {
+            log.warn("No Qdrant matches found (hybrid/role/profile). Falling back to basic listing.");
             return fallbackActivities(request, limit, intent);
         }
 
@@ -670,6 +694,18 @@ public class RecommendService {
         }
 
         return filtered;
+    }
+
+    private List<ActivityEntity> fetchRecentActivities(int limit) {
+        int safe = Math.max(1, Math.min(limit, 100));
+        Pageable pageable = PageRequest.of(0, safe, Sort.by(Sort.Direction.DESC, "createdAt"));
+        return activityRepository.findByFilters(
+                null,
+                null,
+                null,
+                null,
+                pageable
+        ).getContent();
     }
     
     /**
@@ -751,9 +787,10 @@ public class RecommendService {
         prompt.append("\n=== 요청사항 ===\n");
         prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
         prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
-        prompt.append("반드시 JSON만 응답하고, JSON 외 문장/설명/코드 블록을 포함하지 마세요.\n");
+        prompt.append("반드시 하나의 JSON 객체만 출력하세요. 추가 문장/설명/코드블록/백틱/언어 태그(json 등)를 절대 포함하지 마세요.\n");
+        prompt.append("출력 형식 예시: {\"items\":[{\"activityIndex\":1,\"score\":95,\"reason\":\"...\"}]}\n");
         prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)입니다. 사용자가 \"공모전 추천\", \"대회 추천\", \"행사 추천\", \"공고 추천\"처럼 다양한 표현을 사용하더라도 의미를 유연하게 해석하여 가장 관련도 높은 활동을 제안하세요.\n");
-        prompt.append("score는 0-100 사이 숫자이고, reason에는 왜 해당 활동이 사용자에게 도움이 되는지 구체적으로 서술하세요. 반드시 JSON만 출력하고, JSON 외 텍스트를 포함하지 마세요.");
+        prompt.append("score는 0-100 사이 숫자이고, reason에는 왜 해당 활동이 사용자에게 도움이 되는지 구체적으로 서술하세요. JSON 외 텍스트를 절대 포함하지 마세요.");
         
         return prompt.toString();
     }

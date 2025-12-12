@@ -12,6 +12,7 @@ public record TargetRoleResponse(
         Map<String, Double> majorMapping,
         String expectedSeniority,
         List<String> recommendedCerts,
+        List<String> keywords,
         OffsetDateTime updatedAt
 ) {
 }

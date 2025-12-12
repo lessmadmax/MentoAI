@@ -57,6 +57,11 @@ public class TargetRoleEntity {
     @CollectionTable(name = "target_role_recommended_certs", joinColumns = @JoinColumn(name = "role_id"))
     @Column(name = "name")
     private List<String> recommendedCerts = new ArrayList<>();
+
+    @ElementCollection
+    @CollectionTable(name = "target_role_keywords", joinColumns = @JoinColumn(name = "role_id"))
+    @Column(name = "keyword")
+    private List<String> keywords = new ArrayList<>();
 }
 
 

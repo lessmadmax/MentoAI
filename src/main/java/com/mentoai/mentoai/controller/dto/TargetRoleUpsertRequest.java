@@ -12,7 +12,8 @@ public record TargetRoleUpsertRequest(
         Map<String, Double> requiredSkills,
         Map<String, Double> bonusSkills,
         Map<String, Double> majorMapping,
-        List<String> recommendedCerts
+        List<String> recommendedCerts,
+        List<String> keywords
 ) {
 }
 

@@ -2,6 +2,7 @@ package com.mentoai.mentoai.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.entity.ActivityEntity;
 import com.mentoai.mentoai.entity.ActivityTagEntity;
 import com.mentoai.mentoai.entity.ActivityTargetRoleEntity;
@@ -14,6 +15,7 @@ import com.mentoai.mentoai.integration.qdrant.QdrantSearchResult;
 import com.mentoai.mentoai.repository.ActivityRepository;
 import com.mentoai.mentoai.repository.ActivityTargetRoleRepository;
 import com.mentoai.mentoai.repository.TargetRoleRepository;
+import com.mentoai.mentoai.controller.dto.RecommendRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,6 +43,7 @@ public class ActivityRoleMatchService {
     private final TargetRoleRepository targetRoleRepository;
     private final ActivityRepository activityRepository;
     private final ObjectMapper objectMapper;
+    private final UserProfileService userProfileService;
 
     public record RoleMatch(Long activityId, double score, Map<String, Object> payload) {
     }
@@ -195,6 +198,98 @@ public class ActivityRoleMatchService {
         }
     }
 
+    /**
+     * 사용자 프로필 임베딩을 이용해 활동 벡터를 검색합니다.
+     */
+    @Transactional(readOnly = true)
+    public List<RoleMatch> findMatchesForUserProfile(Long userId, int topK) {
+        UserProfileResponse profile = userProfileService.getProfile(userId);
+        String profileDoc = buildUserProfileDocument(profile);
+        if (profileDoc.isBlank()) {
+            log.warn("User {} has insufficient profile data to build embedding", userId);
+            return List.of();
+        }
+
+        int safeTopK = clampTopK(topK);
+        try {
+            List<Double> embedding = geminiService.generateEmbedding(profileDoc);
+            List<QdrantSearchResult> results = qdrantClient.searchAcrossCollections(
+                    embedding,
+                    safeTopK,
+                    null,
+                    qdrantProperties.activityCollections()
+            );
+            return results.stream()
+                    .map(result -> new RoleMatch(extractActivityId(result), result.score(), result.payload()))
+                    .filter(match -> match.activityId() != null)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Failed to retrieve Qdrant matches for user {} profile: {}", userId, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * targetRole, user profile, user query를 하나의 문서로 결합하여 임베딩 검색.
+     * 가중치 없이 단순 결합.
+     */
+    @Transactional(readOnly = true)
+    public List<QdrantSearchResult> hybridSearch(
+            String targetRoleId,
+            Long userId,
+            String userQuery,
+            int topK
+    ) {
+        StringBuilder doc = new StringBuilder();
+
+        // target role 문서
+        if (targetRoleId != null && !targetRoleId.isBlank()) {
+            targetRoleRepository.findById(targetRoleId).ifPresent(role -> {
+                doc.append("ROLE: ").append(buildRoleDocument(role)).append(" ");
+            });
+        }
+
+        // user profile 문서
+        if (userId != null) {
+            try {
+                UserProfileResponse profile = userProfileService.getProfile(userId);
+                String profileDoc = buildUserProfileDocument(profile);
+                if (!profileDoc.isBlank()) {
+                    doc.append("PROFILE: ").append(profileDoc).append(" ");
+                }
+            } catch (Exception ignored) {
+                // 프로필이 없으면 무시
+            }
+        }
+
+        // 사용자 쿼리
+        if (userQuery != null && !userQuery.isBlank()) {
+            doc.append("QUERY: ").append(userQuery.trim());
+        }
+
+        String hybridDoc = doc.toString().trim();
+        if (hybridDoc.isEmpty()) {
+            log.warn("Hybrid search skipped because document is empty (role={}, userId={}, query='{}')",
+                    targetRoleId, userId, userQuery);
+            return List.of();
+        }
+
+        int safeTopK = clampTopK(topK);
+        try {
+            List<Double> embedding = geminiService.generateEmbedding(hybridDoc);
+            return qdrantClient.searchAcrossCollections(
+                    embedding,
+                    safeTopK,
+                    null,
+                    qdrantProperties.activityCollections()
+            );
+        } catch (Exception e) {
+            log.warn("Hybrid search failed (role={}, userId={}, query='{}'): {}",
+                    targetRoleId, userId, userQuery, e.getMessage());
+            return List.of();
+        }
+    }
+
     private int clampTopK(int topK) {
         return Math.max(1, Math.min(topK, 200));
     }
@@ -222,7 +317,7 @@ public class ActivityRoleMatchService {
         }
     }
 
-    private Long extractActivityId(QdrantSearchResult result) {
+    public Long extractActivityId(QdrantSearchResult result) {
         if (result == null || result.payload() == null) {
             return null;
         }
@@ -292,6 +387,65 @@ public class ActivityRoleMatchService {
         return builder.toString().trim();
     }
 
+    private String buildUserProfileDocument(UserProfileResponse profile) {
+        if (profile == null) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+
+        appendIfPresent(builder, profile.targetRoleId());
+
+        UserProfileResponse.University uni = profile.university();
+        if (uni != null) {
+            appendIfPresent(builder, uni.universityName());
+            appendIfPresent(builder, uni.major());
+            if (uni.grade() != null) {
+                builder.append("Grade: ").append(uni.grade()).append(". ");
+            }
+        }
+
+        appendStringList(builder, "Interests", profile.interestDomains());
+
+        if (!CollectionUtils.isEmpty(profile.certifications())) {
+            List<String> certNames = profile.certifications().stream()
+                    .filter(Objects::nonNull)
+                    .map(UserProfileResponse.Certification::name)
+                    .filter(Objects::nonNull)
+                    .toList();
+            appendStringList(builder, "Certifications", certNames);
+        }
+
+        if (!CollectionUtils.isEmpty(profile.techStack())) {
+            List<String> skills = profile.techStack().stream()
+                    .filter(Objects::nonNull)
+                    .map(skill -> skill.level() != null
+                            ? skill.name() + " (" + skill.level() + ")"
+                            : skill.name())
+                    .filter(Objects::nonNull)
+                    .toList();
+            appendStringList(builder, "Skills", skills);
+        }
+
+        if (!CollectionUtils.isEmpty(profile.experiences())) {
+            for (UserProfileResponse.Experience exp : profile.experiences()) {
+                if (exp == null) continue;
+                StringBuilder expBuilder = new StringBuilder();
+                appendIfPresent(expBuilder, exp.title());
+                appendIfPresent(expBuilder, exp.organization());
+                appendIfPresent(expBuilder, exp.role());
+                appendIfPresent(expBuilder, exp.description());
+                if (exp.techStack() != null && !exp.techStack().isEmpty()) {
+                    expBuilder.append("TechStack: ").append(String.join(", ", exp.techStack())).append(". ");
+                }
+                if (expBuilder.length() > 0) {
+                    builder.append("Experience: ").append(expBuilder);
+                }
+            }
+        }
+
+        return builder.toString().trim();
+    }
+
     private void appendIfPresent(StringBuilder builder, String text) {
         if (text != null && !text.isBlank()) {
             builder.append(text.trim()).append(". ");
@@ -315,6 +469,20 @@ public class ActivityRoleMatchService {
         }
         if (joiner.length() > 0) {
             builder.append(label).append(": ").append(joiner).append(". ");
+        }
+    }
+
+    private void appendStringList(StringBuilder builder, String label, List<String> items) {
+        if (CollectionUtils.isEmpty(items)) {
+            return;
+        }
+        List<String> cleaned = items.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
+        if (!cleaned.isEmpty()) {
+            builder.append(label).append(": ").append(String.join(", ", cleaned)).append(". ");
         }
     }
 

@@ -1,6 +1,5 @@
 package com.mentoai.mentoai.service;
 
-import com.mentoai.mentoai.controller.dto.ActivityDateUpsertRequest;
 import com.mentoai.mentoai.controller.dto.ActivityUpsertRequest;
 import com.mentoai.mentoai.controller.dto.AttachmentUpsertRequest;
 import com.mentoai.mentoai.controller.dto.UserProfileResponse;
@@ -8,7 +7,6 @@ import com.mentoai.mentoai.entity.*;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityStatus;
 import com.mentoai.mentoai.entity.ActivityEntity.ActivityType;
 import com.mentoai.mentoai.repository.ActivityRepository;
-import com.mentoai.mentoai.repository.TagRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.*;
@@ -35,7 +33,8 @@ public class ActivityService {
     private static final int MAX_ROLE_MATCH_FETCH = 200;
 
     private final ActivityRepository activityRepository;
-    private final TagRepository tagRepository;
+    private final ActivityDateService activityDateService;
+    private final ActivityTagService activityTagService;
     private final NotificationService notificationService;
     private final ActivityRoleMatchService activityRoleMatchService;
     private final UserProfileService userProfileService;
@@ -150,12 +149,17 @@ public class ActivityService {
     @Transactional
     public ActivityEntity createActivity(ActivityUpsertRequest request) {
         ActivityEntity activity = new ActivityEntity();
-        applyUpsert(activity, request);
+        applyUpsertWithoutDatesAndTags(activity, request);
 
         ActivityEntity savedActivity = activityRepository.save(activity);
-        notificationService.createNewActivityNotification(savedActivity);
-        activityRoleMatchService.indexActivity(savedActivity);
-        return savedActivity;
+        activityDateService.replaceActivityDates(savedActivity.getId(), request.dates());
+        activityTagService.replaceActivityTags(savedActivity.getId(), request.tags());
+
+        ActivityEntity withTags = activityRepository.findById(savedActivity.getId())
+                .orElse(savedActivity);
+        notificationService.createNewActivityNotification(withTags);
+        activityRoleMatchService.indexActivity(withTags);
+        return withTags;
     }
     
     public Optional<ActivityEntity> getActivity(Long id) {
@@ -166,10 +170,16 @@ public class ActivityService {
     public Optional<ActivityEntity> updateActivity(Long id, ActivityUpsertRequest request) {
         return activityRepository.findById(id)
             .map(existingActivity -> {
-                applyUpsert(existingActivity, request);
-                ActivityEntity updated = activityRepository.save(existingActivity);
-                activityRoleMatchService.indexActivity(updated);
-                return updated;
+                applyUpsertWithoutDatesAndTags(existingActivity, request);
+                ActivityEntity saved = activityRepository.save(existingActivity);
+
+                activityDateService.replaceActivityDates(saved.getId(), request.dates());
+                activityTagService.replaceActivityTags(saved.getId(), request.tags());
+                ActivityEntity updatedWithTags = activityRepository.findById(saved.getId())
+                        .orElse(saved);
+
+                activityRoleMatchService.indexActivity(updatedWithTags);
+                return updatedWithTags;
             });
     }
     
@@ -308,7 +318,7 @@ public class ActivityService {
         return content.contains(normalizedQuery);
     }
 
-    private void applyUpsert(ActivityEntity activity, ActivityUpsertRequest request) {
+    private void applyUpsertWithoutDatesAndTags(ActivityEntity activity, ActivityUpsertRequest request) {
         activity.setTitle(request.title());
         activity.setSummary(request.summary());
         activity.setContent(request.content());
@@ -319,78 +329,6 @@ public class ActivityService {
         activity.setIsCampus(request.isCampus() != null ? request.isCampus() : Boolean.FALSE);
         activity.setStatus(parseEnumOrDefault(request.status(), ActivityStatus::valueOf, ActivityStatus.OPEN));
         activity.setPublishedAt(request.publishedAt());
-
-        syncActivityDates(activity, request.dates());
-        syncActivityTags(activity, request.tags());
-    }
-
-    private void syncActivityDates(ActivityEntity activity, List<ActivityDateUpsertRequest> dateRequests) {
-        if (activity.getDates() == null) {
-            activity.setDates(new ArrayList<>());
-        } else {
-            activity.getDates().clear();
-        }
-        if (dateRequests == null) {
-            return;
-        }
-        for (ActivityDateUpsertRequest dateRequest : dateRequests) {
-            ActivityDateEntity dateEntity = new ActivityDateEntity();
-            dateEntity.setActivity(activity);
-            dateEntity.setDateType(parseEnum(
-                    dateRequest.dateType(),
-                    ActivityDateEntity.DateType::valueOf,
-                    ActivityDateEntity.DateType.class));
-            dateEntity.setDateValue(dateRequest.dateValue());
-            activity.getDates().add(dateEntity);
-        }
-    }
-
-    private void syncActivityTags(ActivityEntity activity, List<String> tagNames) {
-        if (activity.getActivityTags() == null) {
-            activity.setActivityTags(new ArrayList<>());
-        } else {
-            activity.getActivityTags().clear();
-        }
-        if (tagNames == null || tagNames.isEmpty()) {
-            return;
-        }
-
-        List<String> distinctNames = tagNames.stream()
-                .filter(name -> name != null && !name.isBlank())
-                .map(String::trim)
-                .distinct()
-                .collect(Collectors.toList());
-
-        if (distinctNames.isEmpty()) {
-            return;
-        }
-
-        List<TagEntity> tags = tagRepository.findByNameIn(distinctNames);
-        Set<String> foundNames = tags.stream().map(TagEntity::getName).collect(Collectors.toSet());
-        List<String> missing = distinctNames.stream()
-                .filter(name -> !foundNames.contains(name))
-                .toList();
-
-        if (!missing.isEmpty()) {
-            log.info("Create missing tags on the fly: {}", missing);
-            List<TagEntity> newTags = missing.stream()
-                    .map(name -> {
-                        TagEntity tag = new TagEntity();
-                        tag.setName(name);
-                        tag.setType(TagEntity.TagType.CATEGORY);
-                        return tag;
-                    })
-                    .toList();
-            List<TagEntity> saved = tagRepository.saveAll(newTags);
-            tags.addAll(saved);
-        }
-
-        for (TagEntity tag : tags) {
-            ActivityTagEntity activityTag = new ActivityTagEntity();
-            activityTag.setActivity(activity);
-            activityTag.setTag(tag);
-            activity.getActivityTags().add(activityTag);
-        }
     }
 
     private <E extends Enum<E>> E parseEnum(String value, java.util.function.Function<String, E> parser, Class<E> enumClass) {
@@ -418,3 +356,4 @@ public class ActivityService {
                 .toList();
     }
 }
+

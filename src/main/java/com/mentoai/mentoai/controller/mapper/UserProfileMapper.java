@@ -218,12 +218,6 @@ public final class UserProfileMapper {
             }
         }
 
-        if (request.targetRoleId() != null && !request.targetRoleId().isBlank()) {
-            profile.setTargetRoleId(request.targetRoleId().trim());
-        } else {
-            profile.setTargetRoleId(null);
-        }
-
         profile.setUpdatedAt(OffsetDateTime.now());
     }
 

@@ -17,7 +17,6 @@ import lombok.extern.slf4j.Slf4j;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -53,7 +52,6 @@ public class S3DataIngestionService {
     private final JobPostingRepository jobPostingRepository;
     private final ObjectMapper objectMapper;
 
-    @Transactional
     public IngestionResult ingestContestActivities() {
         ensureEnabled();
         String prefix = properties.getContestPrefix();
@@ -63,7 +61,6 @@ public class S3DataIngestionService {
         return ingestActivitiesFromPrefix(prefix);
     }
 
-    @Transactional
     public IngestionResult ingestJobPostings() {
         ensureEnabled();
         String prefix = properties.getJobPrefix();
@@ -73,7 +70,6 @@ public class S3DataIngestionService {
         return ingestJobPostingsFromPrefix(prefix);
     }
 
-    @Transactional
     public CombinedIngestionResult ingestAll() {
         IngestionResult contests = ingestContestActivities();
         IngestionResult jobs = ingestJobPostings();
