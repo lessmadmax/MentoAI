@@ -50,6 +50,9 @@ public class RecommendService {
 
     @Value("${recommendation.vector-search.enabled:true}")
     private boolean vectorSearchEnabled;
+
+    @Value("${recommendation.auto-add-calendar:false}")
+    private boolean autoAddCalendar;
     
     // 사용자 맞춤 활동 추천 (targetRole 기반)
     @Transactional(readOnly = true)
@@ -516,6 +519,13 @@ public class RecommendService {
         if (!userRepository.existsById(request.userId())) {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + request.userId());
         }
+
+        // 일반 대화/비추천 의도일 경우 LLM 응답만 반환
+        if (!isRecommendationIntent(request)) {
+            log.info("[recommend] non-recommendation intent. Returning LLM-only response. query='{}'", request.query());
+            List<RecommendResponse.RecommendItem> llmOnly = generateLlmOnlyResponse(request);
+            return new RecommendResponse(llmOnly);
+        }
         
         // 1. 사용자 프로필 수집
         UserProfileResponse userProfile = userProfileService.getProfile(request.userId());
@@ -569,7 +579,8 @@ public class RecommendService {
             finalResponse = fallbackToScoreBasedRecommendation(request, candidateActivities, currentRoleFitScore);
             geminiResponse = "FALLBACK_USED: " + e.getMessage();
         }
-        log.info("[recommend] final items size={} (after LLM/fallback)", finalResponse.items().size());
+        finalResponse = appendSummaryItem(finalResponse, request);
+        log.info("[recommend] final items size={} (after LLM/fallback + summary)", finalResponse.items().size());
 
         recommendChatLogService.completeLog(
                 chatLog.getId(),
@@ -1015,9 +1026,76 @@ public class RecommendService {
         return Math.max(0.0, Math.min(100.0, value));
     }
 
+    /**
+     * 추천 결과 리스트 끝에 요약 아이템을 추가.
+     */
+    private RecommendResponse appendSummaryItem(RecommendResponse response, RecommendRequest request) {
+        if (response == null || response.items() == null || response.items().isEmpty()) {
+            return response;
+        }
+
+        List<String> titles = response.items().stream()
+                .map(RecommendResponse.RecommendItem::activity)
+                .filter(Objects::nonNull)
+                .map(ActivityResponse::title)
+                .filter(Objects::nonNull)
+                .toList();
+
+        String summaryText = "추천 결과 요약을 생성할 수 없습니다.";
+        if (!titles.isEmpty()) {
+            String prompt = """
+                    아래 활동 목록을 한두 문장으로 한국어 요약해 주세요. 사용자의 요청 맥락(공모전/채용/스터디 등)에 맞춰 간결하게 정리합니다.
+                    활동 목록:
+                    %s
+                    """.formatted(String.join("\n", titles));
+            try {
+                summaryText = geminiService.generateText(prompt);
+            } catch (Exception e) {
+                log.warn("Failed to generate summary item: {}", e.getMessage());
+                summaryText = "추천 활동 수: " + titles.size();
+            }
+        }
+
+        ActivityResponse summaryActivity = new ActivityResponse(
+                null,               // activityId
+                "요약",             // title
+                summaryText,        // summary
+                null,               // content
+                null,               // type
+                null,               // organizer
+                null,               // location
+                null,               // url
+                null,               // isCampus
+                null,               // status
+                null,               // vectorDocId
+                null,               // publishedAt
+                null,               // createdAt
+                null,               // updatedAt
+                List.of(),          // dates
+                List.of(),          // tags
+                List.of()           // attachments
+        );
+
+        RecommendResponse.RecommendItem summaryItem = new RecommendResponse.RecommendItem(
+                summaryActivity,
+                null,   // score
+                "LLM 요약", // reason
+                null,
+                null,
+                null
+        );
+
+        List<RecommendResponse.RecommendItem> newItems = new ArrayList<>(response.items());
+        newItems.add(summaryItem);
+        return new RecommendResponse(newItems);
+    }
+
     private void autoAddCalendarEvents(Long userId,
                                        List<RecommendResponse.RecommendItem> items,
                                        Long recommendLogId) {
+        if (!autoAddCalendar) {
+            return;
+        }
         if (userId == null || items == null || items.isEmpty()) {
             return;
         }
@@ -1167,6 +1245,108 @@ public class RecommendService {
             return RecommendIntent.studyIntent();
         }
         return RecommendIntent.defaultIntent();
+    }
+
+    private boolean isRecommendationIntent(RecommendRequest request) {
+        // 1) intentHint가 있으면 추천 의도 있음
+        if (request.intentHint() != null) {
+            return true;
+        }
+        // 2) query 키워드 룰
+        String q = request.query();
+        if (!StringUtils.hasText(q)) {
+            return false;
+        }
+        // 2-1) LLM 기반 분류 우선 시도
+        Boolean llmIntent = detectRecommendationIntentWithLLM(q);
+        if (llmIntent != null) {
+            return llmIntent;
+        }
+        // 2-2) LLM 실패 시 키워드 룰백
+        String n = q.toLowerCase(Locale.ROOT);
+        String[] keywords = {
+                "공모전", "대회", "콘테스트", "대외활동",
+                "채용", "취업", "공고", "잡", "모집", "지원", "인턴",
+                "해커톤", "ai", "데이터", "데이터사이언스"
+        };
+        for (String kw : keywords) {
+            if (n.contains(kw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 추천 의도가 아닐 때, 가벼운 일반 대화용 응답을 생성한다.
+     * 현재는 LLM 호출 없이 간단한 안내 메시지로 처리.
+     */
+    private List<RecommendResponse.RecommendItem> generateLlmOnlyResponse(RecommendRequest request) {
+        String msg = "추천 요청이 아닌 것 같아요. 궁금한 점을 다시 말씀해 주세요.";
+        if (StringUtils.hasText(request.query())) {
+            msg = "입력하신 내용: " + request.query() + "\n추천을 원하시면 공모전/채용/스터디 관련 키워드를 포함해 주세요.";
+        }
+        String llmAnswer = msg;
+        if (StringUtils.hasText(request.query())) {
+            try {
+                llmAnswer = geminiService.generateText(request.query());
+            } catch (Exception e) {
+                log.warn("LLM generation failed for non-recommendation query: {}", e.getMessage());
+            }
+        }
+        ActivityResponse dummy = new ActivityResponse(
+                null,   // activityId
+                llmAnswer,    // title
+                null,   // summary
+                null,   // content
+                null,   // type
+                null,   // organizer
+                null,   // location
+                null,   // url
+                null,   // isCampus
+                null,   // status
+                null,   // vectorDocId
+                null,   // publishedAt
+                null,   // createdAt
+                null,   // updatedAt
+                List.of(), // dates
+                List.of(), // tags
+                List.of()  // attachments
+        );
+        RecommendResponse.RecommendItem item = new RecommendResponse.RecommendItem(
+                dummy,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        return List.of(item);
+    }
+
+    /**
+     * LLM을 사용해 추천 의도 여부(YES/NO)를 판별.
+     */
+    private Boolean detectRecommendationIntentWithLLM(String query) {
+        try {
+            String prompt = """
+                    You are a classifier for recommendation intent.
+                    Decide if the user is asking for recommendations of contests, competitions, jobs, internships, or study/learning activities.
+                    If the user is requesting such recommendations, answer exactly "YES".
+                    Otherwise answer exactly "NO".
+                    User query: "%s"
+                    """.formatted(query);
+            String answer = geminiService.generateText(prompt);
+            if (answer == null) {
+                return null;
+            }
+            String a = answer.trim().toUpperCase(Locale.ROOT);
+            if (a.contains("YES")) return true;
+            if (a.contains("NO")) return false;
+        } catch (Exception e) {
+            log.warn("LLM intent detection failed: {}", e.getMessage());
+        }
+        return null;
     }
 
     private record RecommendIntent(String normalizedIntent,
