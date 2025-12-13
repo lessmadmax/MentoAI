@@ -5,6 +5,9 @@ import com.mentoai.mentoai.controller.dto.ActivityResponse;
 import com.mentoai.mentoai.controller.dto.CalendarEventUpsertRequest;
 import com.mentoai.mentoai.controller.dto.RecommendRequest;
 import com.mentoai.mentoai.controller.dto.RecommendResponse;
+import com.mentoai.mentoai.controller.dto.JobRecommendRequest;
+import com.mentoai.mentoai.controller.dto.JobRecommendResponse;
+import com.mentoai.mentoai.controller.dto.JobPostingResponse;
 import com.mentoai.mentoai.controller.dto.RoleFitRequest;
 import com.mentoai.mentoai.controller.dto.UserProfileResponse;
 import com.mentoai.mentoai.controller.mapper.ActivityMapper;
@@ -47,6 +50,7 @@ public class RecommendService {
     private final ActivityRoleMatchService activityRoleMatchService;
     private final RecommendChatLogService recommendChatLogService;
     private final CalendarEventService calendarEventService;
+    private final JobRecommendationService jobRecommendationService;
 
     @Value("${recommendation.vector-search.enabled:true}")
     private boolean vectorSearchEnabled;
@@ -520,6 +524,12 @@ public class RecommendService {
             throw new IllegalArgumentException("사용자를 찾을 수 없습니다: " + request.userId());
         }
 
+        RecommendIntent intent = inferIntent(request);
+        // 채용 의도면 공고 추천 서비스로 위임
+        if (intent.inferredType() == ActivityType.JOB) {
+            return delegateJobRecommendations(request);
+        }
+
         // 일반 대화/비추천 의도일 경우 LLM 응답만 반환
         if (!isRecommendationIntent(request)) {
             log.info("[recommend] non-recommendation intent. Returning LLM-only response. query='{}'", request.query());
@@ -798,10 +808,10 @@ public class RecommendService {
         prompt.append("\n=== 요청사항 ===\n");
         prompt.append(String.format("위 정보를 바탕으로 사용자에게 가장 적합한 활동 %d개를 추천하고, ", request.getTopKOrDefault()));
         prompt.append("각 추천에 대해 구체적인 이유를 설명해주세요.\n");
-        prompt.append("반드시 하나의 JSON 객체만 출력하세요. 추가 문장/설명/코드블록/백틱/언어 태그(json 등)를 절대 포함하지 마세요.\n");
+        prompt.append("반드시 하나의 JSON 객체만 출력하세요. JSON 바깥에 어떤 문장/설명/코드블록/백틱/언어 태그(json 등)도 넣지 마세요.\n");
         prompt.append("출력 형식 예시: {\"items\":[{\"activityIndex\":1,\"score\":95,\"reason\":\"...\"}]}\n");
         prompt.append("activityIndex는 위 후보 활동 목록 번호(1부터 시작)입니다. 사용자가 \"공모전 추천\", \"대회 추천\", \"행사 추천\", \"공고 추천\"처럼 다양한 표현을 사용하더라도 의미를 유연하게 해석하여 가장 관련도 높은 활동을 제안하세요.\n");
-        prompt.append("score는 0-100 사이 숫자이고, reason에는 왜 해당 활동이 사용자에게 도움이 되는지 구체적으로 서술하세요. JSON 외 텍스트를 절대 포함하지 마세요.");
+        prompt.append("score는 0-100 사이 숫자이고, reason에는 왜 해당 활동이 사용자에게 도움이 되는지 한 문단으로 간결히 서술하세요. JSON 외 텍스트를 절대 포함하지 마세요.");
         
         return prompt.toString();
     }
@@ -1027,6 +1037,62 @@ public class RecommendService {
     }
 
     /**
+     * 채용 추천을 /recommend에서 처리하기 위한 위임
+     */
+    private RecommendResponse delegateJobRecommendations(RecommendRequest request) {
+        int topK = request.getTopKOrDefault();
+        JobRecommendRequest jobRequest = new JobRecommendRequest(
+                request.userId(),
+                topK,
+                request.query()
+        );
+
+        JobRecommendResponse jobResponse = jobRecommendationService.recommend(jobRequest);
+        if (jobResponse == null || jobResponse.items() == null || jobResponse.items().isEmpty()) {
+            return new RecommendResponse(List.of());
+        }
+
+        List<RecommendResponse.RecommendItem> items = jobResponse.items().stream()
+                .map(this::mapJobItemToRecommendItem)
+                .toList();
+        return new RecommendResponse(items);
+    }
+
+    private RecommendResponse.RecommendItem mapJobItemToRecommendItem(JobRecommendResponse.JobItem jobItem) {
+        JobPostingResponse jp = jobItem.jobPosting();
+        ActivityResponse activity = new ActivityResponse(
+                jp.jobId(),                  // activityId로 jobId를 재사용
+                jp.title(),                  // title
+                jp.description(),            // summary
+                jp.requirements(),           // content
+                ActivityType.JOB.name(),     // type
+                jp.companyName(),            // organizer
+                jp.workPlace(),              // location
+                jp.link(),                   // url
+                null,                        // isCampus
+                null,                        // status
+                null,                        // vectorDocId
+                jp.deadline() != null ? jp.deadline().toLocalDateTime() : null, // publishedAt
+                jp.createdAt() != null ? jp.createdAt().toLocalDateTime() : null, // createdAt
+                jp.updatedAt() != null ? jp.updatedAt().toLocalDateTime() : null, // updatedAt
+                List.of(),                   // dates
+                List.of(),                   // tags
+                List.of()                    // attachments
+        );
+
+        Double score = jobItem.score();
+        return new RecommendResponse.RecommendItem(
+                activity,
+                score,
+                jobItem.reason(),
+                score,               // systemScore에 동일 점수 사용
+                jobItem.similarityScore(), // expectedScoreIncrease 자리에 유사도 노출
+                null                 // expectedScoreAfterCompletion (공고에는 없음)
+        );
+    }
+
+
+    /**
      * 추천 결과 리스트 끝에 요약 아이템을 추가.
      */
     private RecommendResponse appendSummaryItem(RecommendResponse response, RecommendRequest request) {
@@ -1058,7 +1124,7 @@ public class RecommendService {
 
         ActivityResponse summaryActivity = new ActivityResponse(
                 null,               // activityId
-                "",                 // title (요약용: 공란)
+                "요약",             // title (요약용 고정)
                 null,               // summary
                 null,               // content
                 null,               // type
@@ -1267,7 +1333,7 @@ public class RecommendService {
         String[] keywords = {
                 "공모전", "대회", "콘테스트", "대외활동",
                 "채용", "취업", "공고", "잡", "모집", "지원", "인턴",
-                "해커톤", "ai", "데이터", "데이터사이언스", "희망직무", "진로설계"
+                "해커톤", "ai", "데이터", "데이터사이언스"
         };
         for (String kw : keywords) {
             if (n.contains(kw)) {
@@ -1296,7 +1362,7 @@ public class RecommendService {
         }
         ActivityResponse dummy = new ActivityResponse(
                 null,   // activityId
-                "",     // title (LLM only: 공란)
+                "LLM 응답", // title을 고정 표기로 설정
                 null,   // summary
                 null,   // content
                 null,   // type
