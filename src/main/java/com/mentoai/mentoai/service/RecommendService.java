@@ -1267,7 +1267,7 @@ public class RecommendService {
         String[] keywords = {
                 "공모전", "대회", "콘테스트", "대외활동",
                 "채용", "취업", "공고", "잡", "모집", "지원", "인턴",
-                "해커톤", "ai", "데이터", "데이터사이언스"
+                "해커톤", "ai", "데이터", "데이터사이언스", "희망직무", "진로설계"
         };
         for (String kw : keywords) {
             if (n.contains(kw)) {
