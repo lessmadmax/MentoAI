@@ -1058,7 +1058,7 @@ public class RecommendService {
 
         ActivityResponse summaryActivity = new ActivityResponse(
                 null,               // activityId
-                null,               // title (요약용: 제목 없이)
+                "",                 // title (요약용: 공란)
                 null,               // summary
                 null,               // content
                 null,               // type
@@ -1296,7 +1296,7 @@ public class RecommendService {
         }
         ActivityResponse dummy = new ActivityResponse(
                 null,   // activityId
-                null,   // title (LLM only: 제목 없이)
+                "",     // title (LLM only: 공란)
                 null,   // summary
                 null,   // content
                 null,   // type
