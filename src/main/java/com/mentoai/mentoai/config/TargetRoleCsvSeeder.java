@@ -100,9 +100,47 @@ public class TargetRoleCsvSeeder implements ApplicationRunner {
                 entity.getKeywords().clear();
                 List<String> csvKeywords = parseKeywords(keywordsRaw);
                 if (!csvKeywords.isEmpty()) {
-                    entity.getKeywords().addAll(csvKeywords);
+                    // 키워드 중 접두어로 스킬/자격증을 구분하여 주입
+                    for (String kw : csvKeywords) {
+                        if (kw == null || kw.isBlank()) continue;
+                        String trimmed = kw.trim();
+                        String lower = trimmed.toLowerCase();
+                        if (lower.startsWith("skill:")) {
+                            String skillName = trimmed.substring(6).trim();
+                            if (!skillName.isEmpty()) {
+                                entity.getRequiredSkills().add(new com.mentoai.mentoai.entity.WeightedSkill(skillName, 1.0));
+                            }
+                            continue;
+                        }
+                        if (lower.startsWith("bonus:")) {
+                            String skillName = trimmed.substring(6).trim();
+                            if (!skillName.isEmpty()) {
+                                entity.getBonusSkills().add(new com.mentoai.mentoai.entity.WeightedSkill(skillName, 0.6));
+                            }
+                            continue;
+                        }
+                        if (lower.startsWith("cert:")) {
+                            String certName = trimmed.substring(5).trim();
+                            if (!certName.isEmpty()) {
+                                entity.getRecommendedCerts().add(certName);
+                            }
+                            continue;
+                        }
+                        entity.getKeywords().add(trimmed);
+                    }
                 } else {
                     entity.getKeywords().addAll(inferKeywords(jobClcd, jobClcdNm, jobNm));
+                }
+
+                // 필수/우대/자격이 비어 있으면 기본값 한두 개를 채워 넣어 최소 한 건 이상 보유하도록 보강
+                if (entity.getRequiredSkills().isEmpty()) {
+                    entity.getRequiredSkills().add(new com.mentoai.mentoai.entity.WeightedSkill("general-skill", 0.8));
+                }
+                if (entity.getBonusSkills().isEmpty()) {
+                    entity.getBonusSkills().add(new com.mentoai.mentoai.entity.WeightedSkill("communication", 0.5));
+                }
+                if (entity.getRecommendedCerts().isEmpty()) {
+                    entity.getRecommendedCerts().add("기본자격");
                 }
 
                 if (entity.getCreatedAt() == null) {

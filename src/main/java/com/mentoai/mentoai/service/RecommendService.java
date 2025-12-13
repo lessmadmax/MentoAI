@@ -1058,8 +1058,8 @@ public class RecommendService {
 
         ActivityResponse summaryActivity = new ActivityResponse(
                 null,               // activityId
-                "요약",             // title
-                summaryText,        // summary
+                null,               // title (요약용: 제목 없이)
+                null,               // summary
                 null,               // content
                 null,               // type
                 null,               // organizer
@@ -1078,8 +1078,8 @@ public class RecommendService {
 
         RecommendResponse.RecommendItem summaryItem = new RecommendResponse.RecommendItem(
                 summaryActivity,
-                null,   // score
-                "LLM 요약", // reason
+                null,           // score
+                summaryText,    // reason에 요약 내용
                 null,
                 null,
                 null
@@ -1296,7 +1296,7 @@ public class RecommendService {
         }
         ActivityResponse dummy = new ActivityResponse(
                 null,   // activityId
-                llmAnswer,    // title
+                null,   // title (LLM only: 제목 없이)
                 null,   // summary
                 null,   // content
                 null,   // type
@@ -1316,7 +1316,7 @@ public class RecommendService {
         RecommendResponse.RecommendItem item = new RecommendResponse.RecommendItem(
                 dummy,
                 null,
-                null,
+                llmAnswer, // reason에 LLM 응답을 담는다
                 null,
                 null,
                 null
